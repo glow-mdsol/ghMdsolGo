@@ -14,6 +14,7 @@ import (
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
+
 // Default values
 const ORG = "mdsol"
 const TeamMedidata = "Team Medidata"
@@ -31,7 +32,7 @@ func main() {
 	userId := flag.String("username", "", "User ID")
 	teamName := flag.String("team", TeamMedidata, "Specified Team")
 	flag.Parse()
-	if (*userId == ""){
+	if *userId == "" {
 		log.Fatal("Need a User ID")
 	}
 
@@ -40,7 +41,7 @@ func main() {
 		log.Fatal("Unable to get User")
 	}
 	n, err := netrc.Parse(filepath.Join(usr.HomeDir, ".netrc"))
-	if err != nil{
+	if err != nil {
 		log.Fatal("Unable to load token")
 	}
 	token := n.Machine("github.com").Get("password")
@@ -54,20 +55,20 @@ func main() {
 	client := github.NewClient(tc)
 
 	// list all repositories for the authenticated user
-	ghUser, resp , err := client.Users.Get(ctx, *userId)
-	if err != nil{
+	ghUser, resp, err := client.Users.Get(ctx, *userId)
+	if err != nil {
 		log.Fatal(fmt.Printf("Error while getting user: %s", err))
 	}
 	if resp.StatusCode == 404 {
 		log.Fatal(fmt.Printf("User %s not found", userId))
 	}
-	if (ghUser.Email == nil){
-		log.Fatal("User ", *userId," has no public email")
+	if ghUser.Email == nil {
+		log.Fatal("User ", *userId, " has no public email")
 	}
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
-	if (!conformant){
-		log.Fatal("User", userId,"has non-conformant email address", ghUser.Email)
+	if !conformant {
+		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
 	log.Println("Validated Pre-requisites for", *userId, "GitHub Email:", *ghUser.Email)
 	// check to see if the user is in the org
@@ -100,19 +101,19 @@ func main() {
 		if err != nil {
 			log.Fatal("Error retrieving Team")
 		}
-		for _, teamIter := range teams{
+		for _, teamIter := range teams {
 			if *teamIter.Name == *teamName {
 				team = teamIter
 				break
 			}
 		}
-		if resp.NextPage == 0{
+		if resp.NextPage == 0 {
 			break
 		}
 		opt.Page = resp.NextPage
 	}
 
-	if team == nil{
+	if team == nil {
 		log.Fatal("Unable to find team", teamName)
 	}
 
@@ -124,7 +125,8 @@ func main() {
 		if err != nil {
 			log.Fatal("Error adding user", *ghUser.Login, " to Team", *team.Name, ": ", err)
 		}
+		log.Println("User", *ghUser.Login, "added to", *team.Name)
 	} else {
-		log.Println("User", *ghUser.Login,"is already a member of", *team.Name)
+		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
 	}
 }
