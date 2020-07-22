@@ -31,11 +31,16 @@ func contains(s []string, e string) bool {
 func main() {
 	userId := flag.String("username", "", "User ID")
 	teamName := flag.String("team", TeamMedidata, "Specified Team")
+	resetFlag := flag.Bool("reset", false, "Generate the Reset link")
+	checkFlag := flag.Bool("check", false, "Check the account")
 	flag.Parse()
 	if *userId == "" {
 		log.Fatal("Need a User ID")
 	}
-
+	if *resetFlag == true {
+		log.Printf("https://github.com/orgs/mdsol/people/%s/sso", *userId)
+		return
+	}
 	usr, err := user.Current()
 	if err != nil {
 		log.Fatal("Unable to get User")
@@ -117,6 +122,10 @@ func main() {
 		log.Fatal("Unable to find team", teamName)
 	}
 
+	if *checkFlag == true {
+		// just check the profile
+		return
+	}
 	var teamMembership *github.Membership
 	teamMembership, resp, err = client.Teams.GetTeamMembership(ctx, *team.ID, *ghUser.Login)
 	if teamMembership == nil {
