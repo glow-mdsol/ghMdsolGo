@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v36/github"
 	"github.com/jdxcode/netrc"
 	"golang.org/x/oauth2"
 	"log"
+	"net/http"
 	"os/user"
 	"path/filepath"
-	"strings"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -19,6 +18,7 @@ var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
 const ORG = "mdsol"
 const TeamMedidata = "Team Medidata"
 
+// Helper function
 func contains(s []string, e string) bool {
 	for _, a := range s {
 		if a == e {
@@ -28,19 +28,9 @@ func contains(s []string, e string) bool {
 	return false
 }
 
-func main() {
-	userId := flag.String("username", "", "User ID")
-	teamName := flag.String("team", TeamMedidata, "Specified Team")
-	resetFlag := flag.Bool("reset", false, "Generate the Reset link")
-	checkFlag := flag.Bool("check", false, "Check the account")
-	flag.Parse()
-	if *userId == "" {
-		log.Fatal("Need a User ID")
-	}
-	if *resetFlag == true {
-		log.Printf("https://github.com/orgs/mdsol/people/%s/sso", *userId)
-		return
-	}
+// creates the initial contact with GitHub - uses the users netrc to get the
+// token
+func connect() (context.Context, *http.Client, *github.Client) {
 	usr, err := user.Current()
 	if err != nil {
 		log.Fatal("Unable to get User")
@@ -58,84 +48,77 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 
 	client := github.NewClient(tc)
+	return ctx, tc, client
+}
 
-	// list all repositories for the authenticated user
-	ghUser, resp, err := client.Users.Get(ctx, *userId)
-	if err != nil {
-		log.Fatal(fmt.Printf("Error while getting user: %s", err))
-	}
-	if resp.StatusCode == 404 {
-		log.Fatal(fmt.Printf("User %s not found", userId))
-	}
-	if ghUser.Email == nil {
-		log.Fatal("User ", *userId, " has no public email")
-	}
-	parts := strings.Split(*ghUser.Email, "@")
-	conformant := contains(DOMAINS, parts[1])
-	if !conformant {
-		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
-	}
-	log.Println("Validated Pre-requisites for", *userId, "GitHub Email:", *ghUser.Email)
-	// check to see if the user is in the org
-	var orgMembership *github.Membership
-	orgMembership, resp, err = client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
-	if err != nil {
-		if resp != nil && resp.StatusCode == 404 {
-			log.Fatal("User ", *ghUser.Login, " is not a member of organization ", ORG)
-		} else {
-			log.Fatal("Membership lookup failed for ", *ghUser.Email, " error: ", err)
-		}
-	}
-	log.Println("User", *ghUser.Login, "is a", *orgMembership.Role, "of", ORG)
-	// check whether SSO enabled
-	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
-	if err != nil || !enabled {
-		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
-	}
-	// check membership of team medidata
-	//var org *github.Organization
-	//org, resp, err = client.Organizations.Get(ctx, ORG)
-	opt := &github.ListOptions{
-		PerPage: 50,
-	}
-	var team *github.Team
+// Go time!
+func main() {
+	var teamName = flag.String("team", TeamMedidata, "Specified Team")
+	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
+	var checkFlag = flag.Bool("check", false, "Check the account(s)")
+	//var repoName = flag.String("repository", "", "Name of the new repository")
+	//var repoDescription = flag.String("description", "", "Description for the new repository")
+	//var templateRepo = flag.String("template", "", "Template repository to use")
+	flag.Parse()
 
-	for {
-		var teams []*github.Team
-		teams, resp, err = client.Teams.ListTeams(ctx, ORG, opt)
-		if err != nil {
-			log.Fatal("Error retrieving Team")
-		}
-		for _, teamIter := range teams {
-			if *teamIter.Name == *teamName {
-				team = teamIter
-				break
+	var userList = flag.Args()
+	if len(userList) == 0 {
+		log.Fatal("Need one or more User IDs")
+	}
+	// create a connection
+	ctx, tc, client := connect()
+
+	for i := 0; i < len(userList); i++ {
+		var userId = userList[i]
+		if userId != "" {
+			if *resetFlag == true {
+				log.Printf("Reset Link: https://github.com/orgs/mdsol/people/%s/sso", userId)
+				continue
 			}
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opt.Page = resp.NextPage
-	}
 
-	if team == nil {
-		log.Fatal("Unable to find team", teamName)
-	}
+			// validating prerequisites
+			ghUser := userPrerequisites(ctx, client, &userId)
+			orgPrequisites(ctx, client, ghUser)
+			ssoPrequisites(ctx, tc, ghUser)
+			if *checkFlag == true {
+				// just check the profile
+				continue
+			}
 
-	if *checkFlag == true {
-		// just check the profile
-		return
-	}
-	var teamMembership *github.Membership
-	teamMembership, resp, err = client.Teams.GetTeamMembership(ctx, *team.ID, *ghUser.Login)
-	if teamMembership == nil {
-		opts := github.TeamAddTeamMembershipOptions{Role: "member"}
-		_, resp, err = client.Teams.AddTeamMembership(ctx, *team.ID, *ghUser.Login, &opts)
-		if err != nil {
-			log.Fatal("Error adding user", *ghUser.Login, " to Team", *team.Name, ": ", err)
+			// check membership of team
+			//var org *github.Organization
+			//org, resp, err = client.Organizations.Get(ctx, ORG)
+			team := getTeamByName(ctx, client, ORG, *teamName)
+
+			checkAndAddMember(ctx, client, team, ghUser)
 		}
-		log.Println("User", *ghUser.Login, "added to", *team.Name)
-	} else {
-		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
+
 	}
+	//} else {
+	//	teams := []string{"Team Medidata"}
+	//	if *teamName != ""{
+	//		teams = append(teams, *teamName)
+	//	}
+	//	// repo mods
+	//	repoInfo := repositoryInfo{
+	//		owner:        ORG,
+	//		name:         *repoName,
+	//		description:  *repoDescription,
+	//		teams:        teams,
+	//		templateRepo: "",
+	//	}
+	//	if *templateRepo != "" {
+	//		repoInfo.templateRepo = *templateRepo
+	//	}
+	//	created, err := createRepository(ctx, client, repoInfo)
+	//	if err != nil {
+	//		log.Fatal("Unable to create repository: ", err)
+	//	} else {
+	//		log.Println("Created ", created.Name)
+	//	}
+	//	enabled, err := enableVulnerabilityAlerts(ctx, client, repoInfo.owner, repoInfo.name)
+	//	if enabled == false {
+	//		log.Fatal("Unable to enable vulnerability alerts:", err )
+	//	}
+	//}
 }
