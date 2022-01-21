@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/google/go-github/v36/github"
-	"github.com/jdxcode/netrc"
-	"golang.org/x/oauth2"
 	"log"
 	"net/http"
 	"os/user"
 	"path/filepath"
+
+	"github.com/google/go-github/v36/github"
+	"github.com/jdxcode/netrc"
+	"golang.org/x/oauth2"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -71,16 +72,17 @@ func main() {
 	for i := 0; i < len(userList); i++ {
 		var userId = userList[i]
 		if userId != "" {
-			if *resetFlag == true {
+			// Supply the reset URL
+			if *resetFlag {
 				log.Printf("Reset Link: https://github.com/orgs/mdsol/people/%s/sso", userId)
 				continue
 			}
 
-			// validating prerequisites
+			// validating prerequisites (exists,
 			ghUser := userPrerequisites(ctx, client, &userId)
 			orgPrequisites(ctx, client, ghUser)
 			ssoPrequisites(ctx, tc, ghUser)
-			if *checkFlag == true {
+			if *checkFlag {
 				// just check the profile
 				continue
 			}

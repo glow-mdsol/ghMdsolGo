@@ -23,7 +23,7 @@ func userPrerequisites(ctx context.Context, client *github.Client, userId *strin
 		log.Fatal(fmt.Printf("Error while getting user: %s", err))
 	}
 	if resp.StatusCode == 404 {
-		log.Fatal(fmt.Printf("User %s not found", userId))
+		log.Fatal(fmt.Printf("User %s not found", *userId))
 	}
 	if ghUser.Email == nil {
 		log.Fatal("User ", *userId, " has no public email")
@@ -76,6 +76,9 @@ func checkAndAddMember(ctx context.Context, client *github.Client, team *github.
 		*team.Organization.ID,
 		*team.ID,
 		*ghUser.Login)
+	if err != nil{
+		log.Fatal("Unable to check team membership: ", err)
+	}
 	if teamMembership == nil {
 		opts := github.TeamAddTeamMembershipOptions{Role: "member"}
 		_, _, err = client.Teams.AddTeamMembershipByID(ctx,
