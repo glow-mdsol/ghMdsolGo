@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"github.com/google/go-github/v42/github"
 	"log"
 	"net/http"
 	"os/user"
 	"path/filepath"
 
-	"github.com/google/go-github/v36/github"
 	"github.com/jdxcode/netrc"
 	"golang.org/x/oauth2"
 )
