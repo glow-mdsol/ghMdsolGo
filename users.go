@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/google/go-github/v36/github"
+	github "github.com/google/go-github/v42/github"
 	"golang.org/x/net/context"
 	"log"
 	"net/http"
@@ -72,11 +72,12 @@ func getTeamByName(ctx context.Context, client *github.Client, org, teamName str
 // check the prerequisites and if satisfied add the user to the team
 func checkAndAddMember(ctx context.Context, client *github.Client, team *github.Team, ghUser *github.User) {
 	var teamMembership *github.Membership
-	teamMembership, _, err := client.Teams.GetTeamMembershipByID(ctx,
+	teamMembership, response, err := client.Teams.GetTeamMembershipByID(ctx,
 		*team.Organization.ID,
 		*team.ID,
 		*ghUser.Login)
-	if err != nil{
+	// check for 404
+	if err != nil && response.StatusCode != 404 {
 		log.Fatal("Unable to check team membership: ", err)
 	}
 	if teamMembership == nil {

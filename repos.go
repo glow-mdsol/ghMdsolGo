@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/google/go-github/v36/github"
+	"github.com/google/go-github/v42/github"
 	"golang.org/x/net/context"
 	"log"
 )
