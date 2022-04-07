@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/google/go-github/v42/github"
+	"github.com/google/go-github/v43/github"
+	"github.com/jdxcode/netrc"
+	"golang.org/x/oauth2"
 	"log"
 	"net/http"
 	"os/user"
 	"path/filepath"
-
-	"github.com/jdxcode/netrc"
-	"golang.org/x/oauth2"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -57,6 +56,7 @@ func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var checkFlag = flag.Bool("check", false, "Check the account(s)")
+	var userTeams = flag.Bool("teams", false, "List User Teams")
 	//var repoName = flag.String("repository", "", "Name of the new repository")
 	//var repoDescription = flag.String("description", "", "Description for the new repository")
 	//var templateRepo = flag.String("template", "", "Template repository to use")
@@ -74,7 +74,10 @@ func main() {
 		if userId != "" {
 			// Supply the reset URL
 			if *resetFlag {
-				log.Printf("Reset Link: https://github.com/orgs/mdsol/people/%s/sso", userId)
+				log.Printf(
+					"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
+					userId,
+				)
 				continue
 			}
 
@@ -87,6 +90,18 @@ func main() {
 				continue
 			}
 
+			if *userTeams {
+				teams, err := getUserTeams(ctx, tc, ORG, userId)
+				if err == nil {
+					log.Printf("User %s is a member of the following teams", userId)
+					for _, team := range teams {
+						log.Printf("* %s (%s)", team.name, team.slug)
+					}
+				} else {
+					log.Println("Unable to get teams: ", err)
+				}
+				continue
+			}
 			// check membership of team
 			//var org *github.Organization
 			//org, resp, err = client.Organizations.Get(ctx, ORG)
