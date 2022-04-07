@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	github "github.com/google/go-github/v42/github"
+	. "github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 	"log"
 	"net/http"
@@ -16,7 +16,7 @@ func slugify(teamName string) (slugged string) {
 }
 
 // check the prerequisites for a users
-func userPrerequisites(ctx context.Context, client *github.Client, userId *string) *github.User {
+func userPrerequisites(ctx context.Context, client *Client, userId *string) *User {
 	// list all repositories for the authenticated user
 	ghUser, resp, err := client.Users.Get(ctx, *userId)
 	if err != nil {
@@ -38,9 +38,9 @@ func userPrerequisites(ctx context.Context, client *github.Client, userId *strin
 }
 
 // check the users organisational requirements
-func orgPrequisites(ctx context.Context, client *github.Client, ghUser *github.User) {
+func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
 	// check to see if the user is in the org
-	var orgMembership *github.Membership
+	var orgMembership *Membership
 	orgMembership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
@@ -53,7 +53,7 @@ func orgPrequisites(ctx context.Context, client *github.Client, ghUser *github.U
 }
 
 // check whether the user is SSO enabled
-func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *github.User) {
+func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *User) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {
 		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
@@ -61,7 +61,7 @@ func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *github.User) {
 }
 
 // get a team by name (using the generated slug)
-func getTeamByName(ctx context.Context, client *github.Client, org, teamName string) *github.Team {
+func getTeamByName(ctx context.Context, client *Client, org, teamName string) *Team {
 	team, _, err := client.Teams.GetTeamBySlug(ctx, org, slugify(teamName))
 	if err != nil {
 		log.Fatal("Unable to find team ", teamName, " - ", err)
@@ -70,8 +70,8 @@ func getTeamByName(ctx context.Context, client *github.Client, org, teamName str
 }
 
 // check the prerequisites and if satisfied add the user to the team
-func checkAndAddMember(ctx context.Context, client *github.Client, team *github.Team, ghUser *github.User) {
-	var teamMembership *github.Membership
+func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *User) {
+	var teamMembership *Membership
 	teamMembership, response, err := client.Teams.GetTeamMembershipByID(ctx,
 		*team.Organization.ID,
 		*team.ID,
@@ -81,7 +81,7 @@ func checkAndAddMember(ctx context.Context, client *github.Client, team *github.
 		log.Fatal("Unable to check team membership: ", err)
 	}
 	if teamMembership == nil {
-		opts := github.TeamAddTeamMembershipOptions{Role: "member"}
+		opts := TeamAddTeamMembershipOptions{Role: "member"}
 		_, _, err = client.Teams.AddTeamMembershipByID(ctx,
 			*team.Organization.ID,
 			*team.ID,
