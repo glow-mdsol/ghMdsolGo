@@ -8,9 +8,11 @@ import (
 )
 
 type teamInfo struct {
-	name   string
-	orgId  string
-	teamId string
+	name        string
+	orgId       string
+	teamId      string
+	description string
+	slug        string
 }
 
 type samlNode struct {
@@ -24,10 +26,13 @@ type samlNode struct {
 }
 
 type teamNode struct {
-	id   string
-	name string
+	ID          string
+	Name        string
+	Description string
+	Slug        string
 }
 
+// Checks if the user is SSO enabled
 func userIsSSO(ctx context.Context, httpClient *http.Client, org string, login string) (bool, error) {
 	var q struct {
 		Organization struct {
@@ -68,39 +73,76 @@ func userIsSSO(ctx context.Context, httpClient *http.Client, org string, login s
 	return false, nil
 }
 
-func getOrganisationAndTeamId(ctx context.Context, httpClient *http.Client,
-	org string, teamName string) (*teamInfo, error) {
+// Get the Team Details
+//func getOrganisationAndTeamId(ctx context.Context, httpClient *http.Client,
+//	org string, teamName string) (*teamInfo, error) {
+//	var q struct {
+//		Organization struct {
+//			ID    string
+//			Login string
+//			Teams struct {
+//				totalCount int64
+//				nodes      []teamNode
+//			} `graphql:"teams(query: $teamName, first: 1)"`
+//		} `graphql:"organization(login: $login)"`
+//	}
+//	variables := map[string]interface{}{
+//		"login":    githubv4.String(org),
+//		"teamName": githubv4.String(teamName),
+//	}
+//	client := githubv4.NewClient(httpClient)
+//	err := client.Query(ctx, &q, variables)
+//
+//	if err != nil {
+//		log.Println("Got error querying Org/Team ID:", err)
+//		return nil, err
+//	}
+//	if q.Organization.Teams.totalCount != 1 {
+//		if q.Organization.Teams.totalCount == 0 {
+//			log.Println("Team", teamName, " not found:")
+//		} else {
+//			log.Println("Got ", q.Organization.Teams.totalCount, " matches for Team ", teamName)
+//		}
+//		return nil, err
+//	}
+//	team := teamInfo{name: teamName,
+//		orgId:  q.Organization.ID,
+//		teamId: q.Organization.Teams.nodes[0].ID}
+//	return &team, nil
+//}
+
+// Get a Users Teams
+func getUserTeams(ctx context.Context, httpClient *http.Client,
+	org string, userLogin string) ([]teamInfo, error) {
 	var q struct {
 		Organization struct {
 			ID    string
 			Login string
 			Teams struct {
-				totalCount int64
-				nodes      []teamNode
-			} `graphql:"teams(query: $teamName, first: 1)"`
-		} `graphql:"organization(login: $login)"`
+				TotalCount int64
+				Nodes      []teamNode
+			} `graphql:"teams(first: $first, userLogins: $userLogin)"`
+		} `graphql:"organization(login: $org)"`
 	}
 	variables := map[string]interface{}{
-		"login":    githubv4.String(org),
-		"teamName": githubv4.String(teamName),
+		"org":       githubv4.String(org),
+		"userLogin": []githubv4.String{githubv4.String(userLogin)},
+		"first":     githubv4.Int(100),
 	}
 	client := githubv4.NewClient(httpClient)
 	err := client.Query(ctx, &q, variables)
-
 	if err != nil {
-		log.Println("Got error querying Org/Team ID:", err)
+		log.Println("Got error querying Team Lists:", err)
 		return nil, err
 	}
-	if q.Organization.Teams.totalCount != 1 {
-		if q.Organization.Teams.totalCount == 0 {
-			log.Println("Team", teamName, " not found:")
-		} else {
-			log.Println("Got ", q.Organization.Teams.totalCount, " matches for Team ", teamName)
-		}
-		return nil, err
+	var teams []teamInfo
+	for _, team := range q.Organization.Teams.Nodes {
+		teams = append(teams, teamInfo{
+			name:        team.Name,
+			orgId:       q.Organization.ID,
+			teamId:      team.ID,
+			slug:        team.Slug,
+			description: team.Description})
 	}
-	team := teamInfo{name: teamName,
-		orgId:  q.Organization.ID,
-		teamId: q.Organization.Teams.nodes[0].id}
-	return &team, nil
+	return teams, nil
 }
