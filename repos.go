@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/google/go-github/v42/github"
+	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 	"log"
 )
@@ -12,6 +12,23 @@ type repositoryInfo struct {
 	description  string
 	teams        []string
 	templateRepo string
+}
+
+func checkRepository(ctx context.Context,
+	client *github.Client, owner, repositoryName string) (*repositoryInfo, error) {
+	repository, _, err := client.Repositories.Get(ctx, owner, repositoryName)
+	if err != nil {
+		log.Println("Unable to detect whether repository exists:", err)
+		return nil, err
+	}
+	info := repositoryInfo{
+		owner:        *repository.Owner.Login,
+		name:         *repository.Name,
+		description:  *repository.Description,
+		teams:        nil,
+		templateRepo: "",
+	}
+	return &info, nil
 }
 
 func createRepository(ctx context.Context,
@@ -65,4 +82,30 @@ func enableVulnerabilityAlerts(ctx context.Context, client *github.Client, owner
 		return false, err
 	}
 	return true, nil
+}
+
+func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repositoryName string) ([]teamInfo, error) {
+
+	// Check the repo exists
+	_, _, err := client.Repositories.Get(ctx, owner, repositoryName)
+	if err != nil {
+		return nil, err
+	}
+
+	var listOptions = github.ListOptions{PerPage: 100}
+	repoTeams, _, err := client.Repositories.ListTeams(ctx, owner, repositoryName, &listOptions)
+	if err != nil {
+		return nil, err
+	}
+	var teams []teamInfo
+	for _, team := range repoTeams {
+		teams = append(teams, teamInfo{
+			name:        *team.Name,
+			description: *team.Description,
+			slug:        *team.Slug,
+			url:         *team.HTMLURL,
+			access:      *team.Permission,
+		})
+	}
+	return teams, nil
 }
