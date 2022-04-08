@@ -13,6 +13,8 @@ type teamInfo struct {
 	teamId      string
 	description string
 	slug        string
+	url         string
+	access      string
 }
 
 type samlNode struct {
@@ -30,6 +32,7 @@ type teamNode struct {
 	Name        string
 	Description string
 	Slug        string
+	URL         string
 }
 
 // Checks if the user is SSO enabled
@@ -142,7 +145,9 @@ func getUserTeams(ctx context.Context, httpClient *http.Client,
 			orgId:       q.Organization.ID,
 			teamId:      team.ID,
 			slug:        team.Slug,
-			description: team.Description})
+			description: team.Description,
+			url:         team.URL,
+		})
 	}
 	return teams, nil
 }
