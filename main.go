@@ -122,7 +122,7 @@ func main() {
 					if err == nil {
 						log.Printf("User %s is a member of the following teams", userId)
 						for _, team := range teams {
-							log.Printf("* %s (%s)", team.name, team.slug)
+							log.Printf("* %s (%s)", team.name, team.url)
 						}
 					} else {
 						log.Println("Unable to get teams: ", err)
