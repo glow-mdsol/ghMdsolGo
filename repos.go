@@ -24,9 +24,11 @@ func checkRepository(ctx context.Context,
 	info := repositoryInfo{
 		owner:        *repository.Owner.Login,
 		name:         *repository.Name,
-		description:  *repository.Description,
 		teams:        nil,
 		templateRepo: "",
+	}
+	if repository.Description != nil {
+		info.description = *repository.Description
 	}
 	return &info, nil
 }
