@@ -16,7 +16,7 @@ func slugify(teamName string) (slugged string) {
 }
 
 // check the prerequisites for a users
-func userPrerequisites(ctx context.Context, client *Client, userId *string) *User {
+func userPrerequisites(ctx context.Context, client *Client, userId *string, userPrompt *bool) *User {
 	// list all repositories for the authenticated user
 	ghUser, resp, err := client.Users.Get(ctx, *userId)
 	if err != nil {
@@ -26,11 +26,17 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 		log.Fatal(fmt.Printf("User %s not found", *userId))
 	}
 	if ghUser.Email == nil {
+		if *userPrompt == true {
+			fmt.Println("Your account is non-conformant (no-email), please check the instructions in the room topic.")
+		}
 		log.Fatal("User ", *userId, " has no public email")
 	}
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
+		if *userPrompt == true {
+			fmt.Println("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
+		}
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
 	log.Println("Validated Pre-requisites for", *userId, "GitHub Email:", *ghUser.Email)

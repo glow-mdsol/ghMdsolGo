@@ -58,6 +58,7 @@ func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var checkFlag = flag.Bool("check", false, "Check the account(s)")
+	var prompt = flag.Bool("no-prompt", true, "Provide User prompt")
 	var userTeams = flag.Bool("teams", false, "List User Teams")
 	var repoTeams = flag.Bool("repo-teams", false, "List Teams For Repo	")
 	//var repoName = flag.String("repository", "", "Name of the new repository")
@@ -109,7 +110,7 @@ func main() {
 				}
 
 				// validating prerequisites (exists,
-				ghUser := userPrerequisites(ctx, client, &userId)
+				ghUser := userPrerequisites(ctx, client, &userId, prompt)
 				orgPrequisites(ctx, client, ghUser)
 				ssoPrequisites(ctx, tc, ghUser)
 				if *checkFlag {
