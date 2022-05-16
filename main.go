@@ -59,8 +59,7 @@ func main() {
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var checkFlag = flag.Bool("check", false, "Check the account(s)")
 	var prompt = flag.Bool("no-prompt", true, "Provide User prompt")
-	var userTeams = flag.Bool("teams", false, "List User Teams")
-	var repoTeams = flag.Bool("repo-teams", false, "List Teams For Repo	")
+	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
 	//var repoName = flag.String("repository", "", "Name of the new repository")
 	//var repoDescription = flag.String("description", "", "Description for the new repository")
 	//var templateRepo = flag.String("template", "", "Template repository to use")
@@ -77,66 +76,65 @@ func main() {
 	ctx, tc, client := connect()
 
 	for i := 0; i < len(userOrRepoList); i++ {
-		if *repoTeams {
-			// treat arguments as repos
-			var repoId = userOrRepoList[i]
+		entitySlug := userOrRepoList[i]
+		if entitySlug == "" {
+			continue
+		}
+		if isRepository(ctx, client, ORG, entitySlug) {
 			// check the repo exists and we have permission
-			_, err := checkRepository(ctx, client, ORG, repoId)
+			_, err := checkRepository(ctx, client, ORG, entitySlug)
 			if err != nil {
 				log.Printf("Can't resolve Repository")
 				continue
 			}
 			// get the teams
-			teams, err := getRepositoryTeams(ctx, client, ORG, repoId)
+			teams, err := getRepositoryTeams(ctx, client, ORG, entitySlug)
 			if err != nil {
-				log.Printf("Unable to resolve teams for Repostory %s: %s", repoId, err)
+				log.Printf("Unable to resolve teams for Repostory %s: %s", entitySlug, err)
 				continue
 			}
-			log.Printf("Repository %s has the following teams with access:", repoId)
+			log.Printf("Repository %s has the following teams with access:", entitySlug)
 			for _, team := range teams {
 				log.Printf("* %s (%s) %s", team.name, team.url, team.access)
 			}
 
-		} else {
-			var userId = userOrRepoList[i]
-			if userId != "" {
-				// Supply the reset URL
-				if *resetFlag {
-					log.Printf(
-						"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
-						userId,
-					)
-					continue
-				}
-
-				// validating prerequisites (exists,
-				ghUser := userPrerequisites(ctx, client, &userId, prompt)
-				orgPrequisites(ctx, client, ghUser)
-				ssoPrequisites(ctx, tc, ghUser)
-				if *checkFlag {
-					// just check the profile
-					continue
-				}
-
-				if *userTeams {
-					teams, err := getUserTeams(ctx, tc, ORG, userId)
-					if err == nil {
-						log.Printf("User %s is a member of the following teams", userId)
-						for _, team := range teams {
-							log.Printf("* %s (%s)", team.name, team.url)
-						}
-					} else {
-						log.Println("Unable to get teams: ", err)
-					}
-					continue
-				}
-				// check membership of team
-				//var org *github.Organization
-				//org, resp, err = client.Organizations.Get(ctx, ORG)
-				team := getTeamByName(ctx, client, ORG, *teamName)
-
-				checkAndAddMember(ctx, client, team, ghUser)
+		} else if isUser(ctx, client, entitySlug) {
+			// Supply the reset URL
+			if *resetFlag {
+				log.Printf(
+					"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
+					entitySlug,
+				)
+				continue
 			}
+
+			// validating prerequisites (exists,
+			ghUser := userPrerequisites(ctx, client, &entitySlug, prompt)
+			orgPrequisites(ctx, client, ghUser)
+			ssoPrequisites(ctx, tc, ghUser)
+			if *checkFlag {
+				// just check the profile
+				continue
+			}
+
+			if *entityTeams {
+				teams, err := getUserTeams(ctx, tc, ORG, entitySlug)
+				if err == nil {
+					log.Printf("User %s is a member of the following teams", entitySlug)
+					for _, team := range teams {
+						log.Printf("* %s (%s)", team.name, team.url)
+					}
+				} else {
+					log.Println("Unable to get teams: ", err)
+				}
+				continue
+			}
+			// check membership of team
+			//var org *github.Organization
+			//org, resp, err = client.Organizations.Get(ctx, ORG)
+			team := getTeamByName(ctx, client, ORG, *teamName)
+
+			checkAndAddMember(ctx, client, team, ghUser)
 		}
 	}
 }
