@@ -33,6 +33,18 @@ func checkRepository(ctx context.Context,
 	return &info, nil
 }
 
+func isRepository(ctx context.Context, client *github.Client, org, entitySlug string) bool {
+	_, resp, err := client.Organizations.Get(ctx, org)
+	if err != nil || resp.StatusCode == 404 {
+		return false
+	}
+	_, resp, err = client.Repositories.Get(ctx, org, entitySlug)
+	if resp.StatusCode == 200 {
+		return true
+	}
+	return false
+}
+
 func createRepository(ctx context.Context,
 	client *github.Client,
 	info repositoryInfo) (*github.Repository, error) {

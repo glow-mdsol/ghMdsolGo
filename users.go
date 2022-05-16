@@ -15,6 +15,14 @@ func slugify(teamName string) (slugged string) {
 	return
 }
 
+func isUser(ctx context.Context, client *Client, entitySlug string) bool {
+	_, resp, _ := client.Users.Get(ctx, entitySlug)
+	if resp.StatusCode == 200 {
+		return true
+	}
+	return false
+}
+
 // check the prerequisites for a users
 func userPrerequisites(ctx context.Context, client *Client, userId *string, userPrompt *bool) *User {
 	// list all repositories for the authenticated user
@@ -67,41 +75,5 @@ func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *User) {
 			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
 		)
 		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
-	}
-}
-
-// get a team by name (using the generated slug)
-func getTeamByName(ctx context.Context, client *Client, org, teamName string) *Team {
-	team, _, err := client.Teams.GetTeamBySlug(ctx, org, slugify(teamName))
-	if err != nil {
-		log.Fatal("Unable to find team ", teamName, " - ", err)
-	}
-	return team
-}
-
-// check the prerequisites and if satisfied add the user to the team
-func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *User) {
-	var teamMembership *Membership
-	teamMembership, response, err := client.Teams.GetTeamMembershipByID(ctx,
-		*team.Organization.ID,
-		*team.ID,
-		*ghUser.Login)
-	// check for 404
-	if err != nil && response.StatusCode != 404 {
-		log.Fatal("Unable to check team membership: ", err)
-	}
-	if teamMembership == nil {
-		opts := TeamAddTeamMembershipOptions{Role: "member"}
-		_, _, err = client.Teams.AddTeamMembershipByID(ctx,
-			*team.Organization.ID,
-			*team.ID,
-			*ghUser.Login,
-			&opts)
-		if err != nil {
-			log.Fatal("Error adding user", *ghUser.Login, " to Team", *team.Name, ": ", err)
-		}
-		log.Println("User", *ghUser.Login, "added to", *team.Name)
-	} else {
-		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
 	}
 }
