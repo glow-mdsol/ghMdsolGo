@@ -15,6 +15,14 @@ func slugify(teamName string) (slugged string) {
 	return
 }
 
+func isUser(ctx context.Context, client *Client, entitySlug string) bool {
+	_, resp, _ := client.Users.Get(ctx, entitySlug)
+	if resp.StatusCode == 200 {
+		return true
+	}
+	return false
+}
+
 // check the prerequisites for a users
 func userPrerequisites(ctx context.Context, client *Client, userId *string, userPrompt *bool) *User {
 	// list all repositories for the authenticated user
@@ -27,7 +35,7 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string, user
 	}
 	if ghUser.Email == nil {
 		if *userPrompt == true {
-			fmt.Println("Your account is non-conformant (no-email), please check the instructions in the room topic.")
+			prompt("Your account is non-conformant (no-email), please check the instructions in the room topic.")
 		}
 		log.Fatal("User ", *userId, " has no public email")
 	}
@@ -35,7 +43,7 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string, user
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
 		if *userPrompt == true {
-			fmt.Println("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
+			prompt("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
 		}
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
@@ -50,6 +58,7 @@ func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
 	orgMembership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
+			prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
 			log.Fatal("User ", *ghUser.Login, " is not a member of organization ", ORG)
 		} else {
 			log.Fatal("Membership lookup failed for ", *ghUser.Email, " error: ", err)
@@ -62,42 +71,9 @@ func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
 func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *User) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {
+		prompt(
+			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
+		)
 		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
-	}
-}
-
-// get a team by name (using the generated slug)
-func getTeamByName(ctx context.Context, client *Client, org, teamName string) *Team {
-	team, _, err := client.Teams.GetTeamBySlug(ctx, org, slugify(teamName))
-	if err != nil {
-		log.Fatal("Unable to find team ", teamName, " - ", err)
-	}
-	return team
-}
-
-// check the prerequisites and if satisfied add the user to the team
-func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *User) {
-	var teamMembership *Membership
-	teamMembership, response, err := client.Teams.GetTeamMembershipByID(ctx,
-		*team.Organization.ID,
-		*team.ID,
-		*ghUser.Login)
-	// check for 404
-	if err != nil && response.StatusCode != 404 {
-		log.Fatal("Unable to check team membership: ", err)
-	}
-	if teamMembership == nil {
-		opts := TeamAddTeamMembershipOptions{Role: "member"}
-		_, _, err = client.Teams.AddTeamMembershipByID(ctx,
-			*team.Organization.ID,
-			*team.ID,
-			*ghUser.Login,
-			&opts)
-		if err != nil {
-			log.Fatal("Error adding user", *ghUser.Login, " to Team", *team.Name, ": ", err)
-		}
-		log.Println("User", *ghUser.Login, "added to", *team.Name)
-	} else {
-		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
 	}
 }
