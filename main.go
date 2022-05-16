@@ -139,31 +139,4 @@ func main() {
 			}
 		}
 	}
-	//} else {
-	//	teams := []string{"Team Medidata"}
-	//	if *teamName != ""{
-	//		teams = append(teams, *teamName)
-	//	}
-	//	// repo mods
-	//	repoInfo := repositoryInfo{
-	//		owner:        ORG,
-	//		name:         *repoName,
-	//		description:  *repoDescription,
-	//		teams:        teams,
-	//		templateRepo: "",
-	//	}
-	//	if *templateRepo != "" {
-	//		repoInfo.templateRepo = *templateRepo
-	//	}
-	//	created, err := createRepository(ctx, client, repoInfo)
-	//	if err != nil {
-	//		log.Fatal("Unable to create repository: ", err)
-	//	} else {
-	//		log.Println("Created ", created.Name)
-	//	}
-	//	enabled, err := enableVulnerabilityAlerts(ctx, client, repoInfo.owner, repoInfo.name)
-	//	if enabled == false {
-	//		log.Fatal("Unable to enable vulnerability alerts:", err )
-	//	}
-	//}
 }

@@ -27,7 +27,7 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string, user
 	}
 	if ghUser.Email == nil {
 		if *userPrompt == true {
-			fmt.Println("Your account is non-conformant (no-email), please check the instructions in the room topic.")
+			prompt("Your account is non-conformant (no-email), please check the instructions in the room topic.")
 		}
 		log.Fatal("User ", *userId, " has no public email")
 	}
@@ -35,7 +35,7 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string, user
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
 		if *userPrompt == true {
-			fmt.Println("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
+			prompt("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
 		}
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
@@ -50,6 +50,7 @@ func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
 	orgMembership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
+			prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
 			log.Fatal("User ", *ghUser.Login, " is not a member of organization ", ORG)
 		} else {
 			log.Fatal("Membership lookup failed for ", *ghUser.Email, " error: ", err)
@@ -62,6 +63,9 @@ func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
 func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *User) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {
+		prompt(
+			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
+		)
 		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
 	}
 }
