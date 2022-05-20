@@ -58,8 +58,8 @@ func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var checkFlag = flag.Bool("check", false, "Check the account(s)")
-	var prompt = flag.Bool("no-prompt", true, "Provide User prompt")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
+	var noPrompt = flag.Bool("no-prompt", false, "Don't copy the prompt to clipboard")
 	//var repoName = flag.String("repository", "", "Name of the new repository")
 	//var repoDescription = flag.String("description", "", "Description for the new repository")
 	//var templateRepo = flag.String("template", "", "Template repository to use")
@@ -101,6 +101,8 @@ func main() {
 		} else if isUser(ctx, client, entitySlug) {
 			// Supply the reset URL
 			if *resetFlag {
+				// copy the reset URL to clipboard
+				prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", entitySlug))
 				log.Printf(
 					"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
 					entitySlug,
@@ -109,7 +111,7 @@ func main() {
 			}
 
 			// validating prerequisites (exists,
-			ghUser := userPrerequisites(ctx, client, &entitySlug, prompt)
+			ghUser := userPrerequisites(ctx, client, &entitySlug, noPrompt)
 			orgPrequisites(ctx, client, ghUser)
 			ssoPrequisites(ctx, tc, ghUser)
 			if *checkFlag {
