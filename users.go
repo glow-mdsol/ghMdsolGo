@@ -24,7 +24,7 @@ func isUser(ctx context.Context, client *Client, entitySlug string) bool {
 }
 
 // check the prerequisites for a users
-func userPrerequisites(ctx context.Context, client *Client, userId *string, userPrompt *bool) *User {
+func userPrerequisites(ctx context.Context, client *Client, userId *string) *User {
 	// list all repositories for the authenticated user
 	ghUser, resp, err := client.Users.Get(ctx, *userId)
 	if err != nil {
@@ -34,17 +34,15 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string, user
 		log.Fatal(fmt.Printf("User %s not found", *userId))
 	}
 	if ghUser.Email == nil {
-		if *userPrompt == true {
-			prompt("Your account is non-conformant (no-email), please check the instructions in the room topic.")
-		}
+		prompt(fmt.Sprintf("%s's account is non-conformant (no-email), please "+
+			"check the instructions in the room topic.", *userId))
 		log.Fatal("User ", *userId, " has no public email")
 	}
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
-		if *userPrompt == true {
-			prompt("Your account is non-conformant (incorrect mail domain), please check the instructions in the room topic.")
-		}
+		prompt(fmt.Sprintf("%s's account (%s) is non-conformant (incorrect mail domain), "+
+			"please check the instructions in the room topic.", *userId, *ghUser.Email))
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
 	log.Println("Validated Pre-requisites for", *userId, "GitHub Email:", *ghUser.Email)

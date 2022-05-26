@@ -59,7 +59,6 @@ func main() {
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var checkFlag = flag.Bool("check", false, "Check the account(s)")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
-	var noPrompt = flag.Bool("no-prompt", false, "Don't copy the prompt to clipboard")
 	//var repoName = flag.String("repository", "", "Name of the new repository")
 	//var repoDescription = flag.String("description", "", "Description for the new repository")
 	//var templateRepo = flag.String("template", "", "Template repository to use")
@@ -111,7 +110,7 @@ func main() {
 			}
 
 			// validating prerequisites (exists,
-			ghUser := userPrerequisites(ctx, client, &entitySlug, noPrompt)
+			ghUser := userPrerequisites(ctx, client, &entitySlug)
 			orgPrequisites(ctx, client, ghUser)
 			ssoPrequisites(ctx, tc, ghUser)
 			if *checkFlag {

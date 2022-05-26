@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	. "github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 	"log"
@@ -48,6 +49,7 @@ func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *
 		if err != nil {
 			log.Fatal("Error adding user", *ghUser.Login, " to Team", *team.Name, ": ", err)
 		}
+		prompt(fmt.Sprintf("User %s added to %s", *ghUser.Login, *team.Name))
 		log.Println("User", *ghUser.Login, "added to", *team.Name)
 	} else {
 		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
