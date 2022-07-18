@@ -136,6 +136,8 @@ func main() {
 			team := getTeamByName(ctx, client, ORG, *teamName)
 
 			checkAndAddMember(ctx, client, team, ghUser)
+		} else {
+			prompt(fmt.Sprintf("Account %s not found.", entitySlug))
 		}
 	}
 }
