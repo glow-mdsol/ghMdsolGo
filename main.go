@@ -19,6 +19,7 @@ var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
 // Default values
 const ORG = "mdsol"
 const TeamMedidata = "Team Medidata"
+const TokenEnvVar = "GITHUB_AUTH_TOKEN"
 
 // Helper function
 func contains(s []string, e string) bool {
@@ -37,12 +38,19 @@ func connect() (context.Context, *http.Client, *github.Client) {
 	if err != nil {
 		log.Fatal("Unable to get User")
 	}
-	n, err := netrc.Parse(filepath.Join(usr.HomeDir, ".netrc"))
-	if err != nil {
-		log.Fatal("Unable to load token")
+	var token string
+	// check the environment variable
+	token = os.Getenv(TokenEnvVar)
+	if token == "" {
+		n, err := netrc.Parse(filepath.Join(usr.HomeDir, ".netrc"))
+		if err != nil {
+			log.Fatal("Unable to load token")
+		}
+		token = n.Machine("github.com").Get("password")
 	}
-	token := n.Machine("github.com").Get("password")
-
+	if token == "" {
+		log.Fatal("Unable to find a token for access")
+	}
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},

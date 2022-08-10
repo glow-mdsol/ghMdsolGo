@@ -2,6 +2,11 @@
 
 A silly little app to streamline the process of checking a users account for the correct setup and adding if ok
 
+## Configuration
+The app requires a GitHub Token with User and Org permissions; this can be got from:
+* a `GITHUB_AUTH_TOKEN` environment variable 
+* from a [.netrc](https://www.gnu.org/software/inetutils/manual/html_node/The-_002enetrc-file.html) file.
+
 ## Usage
 Usage of the tool is pretty simple
   ```shell
@@ -13,7 +18,7 @@ Usage of the tool is pretty simple
     -reset
           Generate the Reset link
     -team string
-          Specified Team (default "Team Squahs")
+          Specified Team (default "Team *****")
     -teams
           List User/Repo Teams
   ```
