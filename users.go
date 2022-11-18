@@ -50,28 +50,26 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 }
 
 // check the users organisational requirements
-func orgPrequisites(ctx context.Context, client *Client, ghUser *User) {
+func meetsOrgPrequisites(ctx context.Context, client *Client, ghUser *User) (bool, int) {
 	// check to see if the user is in the org
 	var orgMembership *Membership
 	orgMembership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
-			prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
-			log.Fatal("User ", *ghUser.Login, " is not a member of organization ", ORG)
+			return false, 1
 		} else {
-			log.Fatal("Membership lookup failed for ", *ghUser.Email, " error: ", err)
+			return false, 2
 		}
 	}
 	log.Println("User", *ghUser.Login, "is a", *orgMembership.Role, "of", ORG)
+	return true, 0
 }
 
 // check whether the user is SSO enabled
-func ssoPrequisites(ctx context.Context, tc *http.Client, ghUser *User) {
+func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *User) (bool, int) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {
-		prompt(
-			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
-		)
-		log.Fatal("User ", *ghUser.Login, " is not SSO enabled")
+		return false, 1
 	}
+	return true, 0
 }

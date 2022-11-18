@@ -13,4 +13,5 @@ require (
 	golang.org/x/net v0.0.0-20220403103023-749bd193bc2b
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a
 	google.golang.org/protobuf v1.28.0 // indirect
+	rsc.io/getopt v0.0.0-20170811000552-20be20937449
 )
