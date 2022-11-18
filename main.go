@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"rsc.io/getopt"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -65,19 +66,25 @@ func connect() (context.Context, *http.Client, *github.Client) {
 func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
-	var checkFlag = flag.Bool("check", false, "Check the account(s)")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
-	//var repoName = flag.String("repository", "", "Name of the new repository")
-	//var repoDescription = flag.String("description", "", "Description for the new repository")
-	//var templateRepo = flag.String("template", "", "Template repository to use")
-	flag.Parse()
+	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
+	var help = flag.Bool("help", false, "Print help")
+	getopt.Alias("s", "team")
+	getopt.Alias("a", "add")
+	getopt.Alias("t", "teams")
+	getopt.Alias("r", "reset")
+	getopt.Alias("h", "help")
+	getopt.Parse()
 
-	var userOrRepoList = flag.Args()
-	if len(userOrRepoList) == 0 {
+	if *help == true {
 		fmt.Println("Usage is: ghMdsol <options> <logins or repository names>")
 		fmt.Println("where options are:")
-		flag.PrintDefaults()
+		getopt.PrintDefaults()
 		os.Exit(0)
+	}
+	var userOrRepoList = flag.Args()
+	if len(userOrRepoList) == 0 {
+		log.Fatal("Usage is: ghMdsol <options> <logins or repository names>")
 	}
 	// create a connection
 	ctx, tc, client := connect()
@@ -119,13 +126,32 @@ func main() {
 
 			// validating prerequisites (exists,
 			ghUser := userPrerequisites(ctx, client, &entitySlug)
-			orgPrequisites(ctx, client, ghUser)
-			ssoPrequisites(ctx, tc, ghUser)
-			if *checkFlag {
-				// just check the profile
+			result, code := meetsOrgPrequisites(ctx, client, ghUser)
+			if !result && code == 1 {
+				if code == 1 {
+					prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
+					log.Println("User ", *ghUser.Login, " is not a member of organization ", ORG)
+				} else {
+					log.Printf("Unable to determine organization membership")
+				}
+				continue
+			}
+			result, code = meetsSSOPrequisites(ctx, tc, ghUser)
+			if !result {
+				prompt(
+					fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
+				)
+				log.Printf("User %s is not SSO enabled", *ghUser.Login)
 				continue
 			}
 
+			if *addToTM {
+				team := getTeamByName(ctx, client, ORG, *teamName)
+				checkAndAddMember(ctx, client, team, ghUser)
+				continue
+			}
+
+			// check membership of team
 			if *entityTeams {
 				teams, err := getUserTeams(ctx, tc, ORG, entitySlug)
 				if err == nil {
@@ -138,14 +164,8 @@ func main() {
 				}
 				continue
 			}
-			// check membership of team
-			//var org *github.Organization
-			//org, resp, err = client.Organizations.Get(ctx, ORG)
-			team := getTeamByName(ctx, client, ORG, *teamName)
-
-			checkAndAddMember(ctx, client, team, ghUser)
 		} else {
-			prompt(fmt.Sprintf("Account %s not found.", entitySlug))
+			prompt(fmt.Sprintf("Account or Repository %s not found.", entitySlug))
 		}
 	}
 }
