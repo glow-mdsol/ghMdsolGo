@@ -34,14 +34,14 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 		log.Fatal(fmt.Printf("User %s not found", *userId))
 	}
 	if ghUser.Email == nil {
-		prompt(fmt.Sprintf("%s's account is non-conformant (no-public-email), please "+
+		prompt(fmt.Sprintf("The account %s is non-conformant (no-public-email), please "+
 			"check the instructions in the room topic. ( fix on https://github.com/settings/profile )", *userId))
 		log.Fatal("User ", *userId, " has no public email")
 	}
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
-		prompt(fmt.Sprintf("%s's account (%s) is non-conformant (incorrect mail domain), "+
+		prompt(fmt.Sprintf("The account %s (email %s) is non-conformant (incorrect mail domain), "+
 			"please check the instructions in the room topic.", *userId, *ghUser.Email))
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
