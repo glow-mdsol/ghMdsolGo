@@ -47,7 +47,7 @@ func connect() (context.Context, *http.Client, *github.Client) {
 		if err != nil {
 			log.Fatal("Unable to load token")
 		}
-		token = n.Machine("github.com").Get("password")
+		token = n.Machine("api.github.com").Get("password")
 	}
 	if token == "" {
 		log.Fatal("Unable to find a token for access")
