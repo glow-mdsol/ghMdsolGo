@@ -59,3 +59,8 @@ Usage of the tool is pretty simple
   $ ghMdsolGo -reset someuser 
   2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
   ```
+* Reset Invite using email to search SSO
+  ```shell
+  $ ghMdsolGo -reset someuser@somedomain.com 
+  2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
+  ```
