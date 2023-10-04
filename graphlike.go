@@ -76,6 +76,38 @@ func userIsSSO(ctx context.Context, httpClient *http.Client, org string, login s
 	return false, nil
 }
 
+func findUserByEmail(ctx context.Context, httpClient *http.Client, org string, email string) (string, error) {
+	var q struct {
+		Organization struct {
+			SamlIdentityProvider struct {
+				ExternalIdentities struct {
+					TotalCount githubv4.Int
+					Nodes      []samlNode
+				} `graphql:"externalIdentities(first: 100, userName: $email, after: $cursor)"`
+			}
+		} `graphql:"organization(login: $login)"`
+	}
+	variables := map[string]interface{}{
+		"login":  githubv4.String(org),
+		"email":  githubv4.String(email),
+		"cursor": (*githubv4.String)(nil), // Null after argument to get first page.
+	}
+	client := githubv4.NewClient(httpClient)
+	for {
+		err := client.Query(ctx, &q, variables)
+
+		if err != nil {
+			log.Println("Got error querying email:", err)
+			return "", err
+		}
+		if q.Organization.SamlIdentityProvider.ExternalIdentities.TotalCount != 0 {
+			return q.Organization.SamlIdentityProvider.ExternalIdentities.Nodes[0].User.Login, nil
+		} else {
+			return "", nil
+		}
+	}
+}
+
 // Get the Team Details
 //func getOrganisationAndTeamId(ctx context.Context, httpClient *http.Client,
 //	org string, teamName string) (*teamInfo, error) {

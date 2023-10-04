@@ -6,22 +6,25 @@ A silly little app to streamline the process of checking a users account for the
 The app requires a GitHub Token with User and Org permissions; this can be got from:
 * a `GITHUB_AUTH_TOKEN` environment variable 
 * from a [.netrc](https://www.gnu.org/software/inetutils/manual/html_node/The-_002enetrc-file.html) file.
+  * looks for a machine record for `api.github.com`
 
 ## Usage
 Usage of the tool is pretty simple
   ```shell
   Usage of ghMdsolGo:
-    -check
-          Check the account(s)
-    -no-prompt
-          Provide User prompt (default true)
-    -reset
-          Generate the Reset link
-    -team string
-          Specified Team (default "Team *****")
-    -teams
-          List User/Repo Teams
-  ```
+  Usage is: ghMdsol <options> <logins or repository names>
+  where options are:
+  -a, --add
+    	Add User to Team ORG
+  -h, --help
+    	Print help
+  -r, --reset
+    	Generate the Reset link
+  -s, --team string
+    	Specified Team (default "Team ORG")
+  -t, --teams
+    	List User/Repo Teams  
+    ```
 
 ### Examples
 
