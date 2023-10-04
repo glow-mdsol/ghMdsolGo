@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"rsc.io/getopt"
+	"strings"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -92,6 +93,23 @@ func main() {
 	for i := 0; i < len(userOrRepoList); i++ {
 		entitySlug := userOrRepoList[i]
 		if entitySlug == "" {
+			continue
+		}
+		if *resetFlag && strings.Contains(entitySlug, "@") {
+			// reset based on an email
+			login, err := findUserByEmail(ctx, tc, ORG, entitySlug)
+			if err != nil {
+				log.Printf("Can't resolve User by email")
+			} else {
+				if login != "" {
+					prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", login))
+					log.Printf(
+						"Resetting account associated with email %s\nReset Link: https://github.com/orgs/mdsol/people/%s/sso",
+						entitySlug,
+						login,
+					)
+				}
+			}
 			continue
 		}
 		if isRepository(ctx, client, ORG, entitySlug) {
