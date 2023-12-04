@@ -13,7 +13,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"rsc.io/getopt"
-	"strings"
 )
 
 var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
@@ -63,6 +62,30 @@ func connect() (context.Context, *http.Client, *github.Client) {
 	return ctx, tc, client
 }
 
+func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, userLogin string) (bool, *github.User) {
+	ghUser := userPrerequisites(ctx, client, &userLogin)
+	// check membership of org
+	result, code := meetsOrgPrequisites(ctx, client, ghUser)
+	if !result && code == 1 {
+		if code == 1 {
+			prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
+			log.Println("User ", *ghUser.Login, " is not a member of organization ", ORG)
+		} else {
+			log.Printf("Unable to determine organization membership")
+		}
+		return false, ghUser
+	}
+	result, code = meetsSSOPrequisites(ctx, tc, ghUser)
+	if !result {
+		prompt(
+			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
+		)
+		log.Printf("User %s is not SSO enabled", *ghUser.Login)
+		return false, ghUser
+	}
+	return true, ghUser
+}
+
 // Go time!
 func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
@@ -93,23 +116,7 @@ func main() {
 	for i := 0; i < len(userOrRepoList); i++ {
 		entitySlug := userOrRepoList[i]
 		if entitySlug == "" {
-			continue
-		}
-		if *resetFlag && strings.Contains(entitySlug, "@") {
-			// reset based on an email
-			login, err := findUserByEmail(ctx, tc, ORG, entitySlug)
-			if err != nil {
-				log.Printf("Can't resolve User by email")
-			} else {
-				if login != "" {
-					prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", login))
-					log.Printf(
-						"Resetting account associated with email %s\nReset Link: https://github.com/orgs/mdsol/people/%s/sso",
-						entitySlug,
-						login,
-					)
-				}
-			}
+			// skip empty
 			continue
 		}
 		if isRepository(ctx, client, ORG, entitySlug) {
@@ -129,61 +136,58 @@ func main() {
 			for _, team := range teams {
 				log.Printf("* %s (%s) %s", team.name, team.url, team.access)
 			}
-
-		} else if isUser(ctx, client, entitySlug) {
-			// Supply the reset URL
-			if *resetFlag {
-				// copy the reset URL to clipboard
-				prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", entitySlug))
-				log.Printf(
-					"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
-					entitySlug,
-				)
-				continue
-			}
-
-			// validating prerequisites (exists,
-			ghUser := userPrerequisites(ctx, client, &entitySlug)
-			result, code := meetsOrgPrequisites(ctx, client, ghUser)
-			if !result && code == 1 {
-				if code == 1 {
-					prompt(fmt.Sprintf("User %s is not a member of organisation %s", *ghUser.Login, ORG))
-					log.Println("User ", *ghUser.Login, " is not a member of organization ", ORG)
-				} else {
-					log.Printf("Unable to determine organization membership")
-				}
-				continue
-			}
-			result, code = meetsSSOPrequisites(ctx, tc, ghUser)
-			if !result {
-				prompt(
-					fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
-				)
-				log.Printf("User %s is not SSO enabled", *ghUser.Login)
-				continue
-			}
-
-			if *addToTM {
-				team := getTeamByName(ctx, client, ORG, *teamName)
-				checkAndAddMember(ctx, client, team, ghUser)
-				continue
-			}
-
-			// check membership of team
-			if *entityTeams {
-				teams, err := getUserTeams(ctx, tc, ORG, entitySlug)
-				if err == nil {
-					log.Printf("User %s is a member of the following teams", entitySlug)
-					for _, team := range teams {
-						log.Printf("* %s (%s)", team.name, team.url)
-					}
-				} else {
-					log.Println("Unable to get teams: ", err)
-				}
-				continue
-			}
 		} else {
-			prompt(fmt.Sprintf("Account or Repository %s not found.", entitySlug))
+			login, err := resolveLogin(ctx, tc, &entitySlug)
+			if err != nil {
+				log.Printf("Unable to resolve %s: %s", entitySlug, err)
+				continue
+			}
+			if login == "" {
+				continue
+			}
+			log.Printf("Processing %s", login)
+			// check the user exists
+			if isUser(ctx, client, &login) {
+				// check the user is valid
+				valid, ghUser := userIsValid(ctx, client, tc, login)
+				if !valid {
+					continue
+				}
+
+				// Supply the reset URL
+				if *resetFlag {
+					// copy the reset URL to clipboard
+					prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", login))
+					log.Printf(
+						"Reset Link: https://github.com/orgs/mdsol/people/%s/sso",
+						login,
+					)
+					continue
+				}
+				if *addToTM {
+					team := getTeamByName(ctx, client, ORG, *teamName)
+					checkAndAddMember(ctx, client, team, ghUser)
+					continue
+				}
+
+				// check membership of team
+				if *entityTeams {
+					teams, err := getUserTeams(ctx, tc, ORG, login)
+					if err == nil {
+						log.Printf("User %s is a member of the following teams", login)
+						for _, team := range teams {
+							log.Printf("* %s (%s)", team.name, team.url)
+						}
+					} else {
+						log.Println("Unable to get teams: ", err)
+					}
+					continue
+				}
+
+			} else {
+				prompt(fmt.Sprintf("Account or Repository %s not found.", login))
+			}
+
 		}
 	}
 }
