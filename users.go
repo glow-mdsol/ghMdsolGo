@@ -9,21 +9,43 @@ import (
 	"strings"
 )
 
-// generate slugs for github enitities (teams esp.)
+// slugify - generate slugs for github enitities (teams esp.)
 func slugify(teamName string) (slugged string) {
 	slugged = strings.ReplaceAll(strings.ToLower(teamName), " ", "-")
 	return
 }
 
-func isUser(ctx context.Context, client *Client, entitySlug string) bool {
-	_, resp, _ := client.Users.Get(ctx, entitySlug)
+// isUser - confirm that the entitySlug refers to a user
+func isUser(ctx context.Context, client *Client, entitySlug *string) bool {
+	_, resp, _ := client.Users.Get(ctx, *entitySlug)
 	if resp.StatusCode == 200 {
 		return true
 	}
 	return false
 }
 
-// check the prerequisites for a users
+// resolveLogin - resolve an email or login to a user
+func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (string, error) {
+	// try to resolve user by email (only in context of Org)
+	if strings.Contains(*entitySlug, "@") {
+		// assume email
+		login, err := findUserByEmail(ctx, tc, ORG, *entitySlug)
+		if err != nil {
+			log.Printf("Unable to resolve email %s: %s", login, err)
+			return "", err
+		}
+		if login == "" {
+			log.Printf("Unable to resolve email %s to valid user", *entitySlug)
+			return "", nil
+		}
+		log.Printf("Resolved email %s to user %s", *entitySlug, login)
+		return login, nil
+	} else {
+		return *entitySlug, nil
+	}
+}
+
+// userPrerequisites - check the prerequisites for a users
 func userPrerequisites(ctx context.Context, client *Client, userId *string) *User {
 	// list all repositories for the authenticated user
 	ghUser, resp, err := client.Users.Get(ctx, *userId)
@@ -49,7 +71,7 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 	return ghUser
 }
 
-// check the users organisational requirements
+// meetsOrgPrequisites - check the users organisational requirements
 func meetsOrgPrequisites(ctx context.Context, client *Client, ghUser *User) (bool, int) {
 	// check to see if the user is in the org
 	var orgMembership *Membership
@@ -65,7 +87,7 @@ func meetsOrgPrequisites(ctx context.Context, client *Client, ghUser *User) (boo
 	return true, 0
 }
 
-// check whether the user is SSO enabled
+// meetsSSOPrequisites - check whether the user is SSO enabled
 func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *User) (bool, int) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {

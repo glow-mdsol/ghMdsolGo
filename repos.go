@@ -4,6 +4,7 @@ import (
 	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 	"log"
+	"strings"
 )
 
 type repositoryInfo struct {
@@ -14,6 +15,7 @@ type repositoryInfo struct {
 	templateRepo string
 }
 
+// checkRepository - check if a repository exists
 func checkRepository(ctx context.Context,
 	client *github.Client, owner, repositoryName string) (*repositoryInfo, error) {
 	repository, _, err := client.Repositories.Get(ctx, owner, repositoryName)
@@ -33,7 +35,12 @@ func checkRepository(ctx context.Context,
 	return &info, nil
 }
 
+// isRepository - confirms that the input is the name of a repository within the org
 func isRepository(ctx context.Context, client *github.Client, org, entitySlug string) bool {
+	// repo will never have a @ in it
+	if strings.Contains(entitySlug, "@") {
+		return false
+	}
 	_, resp, err := client.Organizations.Get(ctx, org)
 	if err != nil || resp.StatusCode == 404 {
 		return false
@@ -45,6 +52,7 @@ func isRepository(ctx context.Context, client *github.Client, org, entitySlug st
 	return false
 }
 
+// createRepository - create a new repository within the org
 func createRepository(ctx context.Context,
 	client *github.Client,
 	info repositoryInfo) (*github.Repository, error) {
@@ -98,6 +106,7 @@ func enableVulnerabilityAlerts(ctx context.Context, client *github.Client, owner
 	return true, nil
 }
 
+// getRepositoryTeams - get the teams associated with a repository
 func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repositoryName string) ([]teamInfo, error) {
 
 	// Check the repo exists
