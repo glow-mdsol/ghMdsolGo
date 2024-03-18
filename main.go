@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v60/github"
 	"github.com/jdxcode/netrc"
 	"golang.org/x/oauth2"
 	"log"
@@ -92,12 +92,14 @@ func main() {
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
 	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
+	var getAdminUsers = flag.Bool("admin", false, "List Admin Users")
 	var help = flag.Bool("help", false, "Print help")
 	getopt.Alias("s", "team")
 	getopt.Alias("a", "add")
 	getopt.Alias("t", "teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("h", "help")
+	getopt.Alias("m", "admin")
 	getopt.Parse()
 
 	if *help == true {
@@ -126,15 +128,30 @@ func main() {
 				log.Printf("Can't resolve Repository")
 				continue
 			}
-			// get the teams
-			teams, err := getRepositoryTeams(ctx, client, ORG, entitySlug)
-			if err != nil {
-				log.Printf("Unable to resolve teams for Repostory %s: %s", entitySlug, err)
-				continue
-			}
-			log.Printf("Repository %s has the following teams with access:", entitySlug)
-			for _, team := range teams {
-				log.Printf("* %s (%s) %s", team.name, team.url, team.access)
+			if *getAdminUsers {
+				admins, err := getRepositoryAdmins(ctx, client, ORG, entitySlug)
+				if err != nil {
+					log.Printf("Unable to resolve admins for Repostory %s: %s", entitySlug, err)
+					continue
+				}
+				if len(admins) != 0 {
+					log.Printf("Repository %s has the following admins:", entitySlug)
+					for _, admin := range admins {
+						log.Printf("* %s (%s)", admin.Login)
+					}
+				}
+			} else {
+
+				// get the teams
+				teams, err := getRepositoryTeams(ctx, client, ORG, entitySlug)
+				if err != nil {
+					log.Printf("Unable to resolve teams for Repostory %s: %s", entitySlug, err)
+					continue
+				}
+				log.Printf("Repository %s has the following teams with access:", entitySlug)
+				for _, team := range teams {
+					log.Printf("* %s (%s) %s", team.name, team.url, team.access)
+				}
 			}
 		} else {
 			login, err := resolveLogin(ctx, tc, &entitySlug)
