@@ -7,17 +7,17 @@ import (
 	"log"
 )
 
-func isTeam(ctx context.Context, client *Client, org, entityId string) bool {
-	_, resp, err := client.Organizations.Get(ctx, org)
-	if err != nil || resp.StatusCode == 404 {
-		return false
-	}
-	_, resp, err = client.Teams.GetTeamBySlug(ctx, org, entityId)
-	if resp.StatusCode == 200 {
-		return true
-	}
-	return false
-}
+//func isTeam(ctx context.Context, client *Client, org, entityId string) bool {
+//	_, resp, err := client.Organizations.Get(ctx, org)
+//	if err != nil || resp.StatusCode == 404 {
+//		return false
+//	}
+//	_, resp, err = client.Teams.GetTeamBySlug(ctx, org, entityId)
+//	if resp.StatusCode == 200 {
+//		return true
+//	}
+//	return false
+//}
 
 // get a team by name (using the generated slug)
 func getTeamByName(ctx context.Context, client *Client, org, teamName string) *Team {
