@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v60/github"
 	"golang.org/x/net/context"
 	"log"
 	"strings"
@@ -131,4 +131,14 @@ func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repos
 		})
 	}
 	return teams, nil
+}
+
+func getRepositoryAdmins(ctx context.Context, client *github.Client, owner, repositoryName string) ([]*github.User, error) {
+	// Check the repo exists
+	collabListOptions := github.ListCollaboratorsOptions{Permission: "admin"}
+	users, _, err := client.Repositories.ListCollaborators(ctx, owner, repositoryName, &collabListOptions)
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }
