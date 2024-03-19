@@ -129,15 +129,31 @@ func main() {
 				continue
 			}
 			if *getAdminUsers {
+				owners, err := getOrganisationOwners(ctx, client)
+				if err != nil {
+					log.Printf("Unable to resolve owners: %s", err)
+					continue
+				}
+				ownerLogins := make([]string, len(owners))
+				for i, owner := range owners {
+					ownerLogins[i] = *owner.Login
+				}
 				admins, err := getRepositoryAdmins(ctx, client, ORG, entitySlug)
 				if err != nil {
 					log.Printf("Unable to resolve admins for Repostory %s: %s", entitySlug, err)
 					continue
 				}
-				if len(admins) != 0 {
+				var nonOwners []string
+				for _, admin := range admins {
+					// strip out the owners
+					if !contains(ownerLogins, *admin.Login) {
+						nonOwners = append(nonOwners, *admin.Login)
+					}
+				}
+				if len(nonOwners) != 0 {
 					log.Printf("Repository %s has the following admins:", entitySlug)
-					for _, admin := range admins {
-						log.Printf("* %s (%s)", admin.Login)
+					for _, admin := range nonOwners {
+						log.Printf("* %s", admin)
 					}
 				}
 			} else {

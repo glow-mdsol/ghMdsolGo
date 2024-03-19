@@ -95,3 +95,12 @@ func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *User) (bo
 	}
 	return true, 0
 }
+
+// getOrganisationOwners - get the owners of the organisation
+func getOrganisationOwners(ctx context.Context, client *Client) ([]*User, error) {
+	owners, _, err := client.Organizations.ListMembers(ctx, ORG, &ListMembersOptions{Role: "admin"})
+	if err != nil {
+		return nil, err
+	}
+	return owners, nil
+}
