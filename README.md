@@ -1,6 +1,13 @@
 # ghMDSOLGO
 
-A silly little app to streamline the process of checking a users account for the correct setup and adding if ok
+A silly little app to streamline the process of checking a users account for the correct setup and adding if ok.  
+
+It will run the following checks on the user account:
+* requires a public email address
+* requires 2-FA enabled
+* requires Name set on account 
+
+Each failure will be copied into your 
 
 ## Installation
 * Install go
@@ -9,13 +16,12 @@ A silly little app to streamline the process of checking a users account for the
   ```
 * Install the tool
   ```
-  go install github.com/glow-mdsol/ghMdsolGo
+  go install github.com/glow-mdsol/ghMdsolGo@latest
   ```
 * Add your GOBIN path to your path, by adding the following to your `~/.zshrc` or `~/.bashrc`
   ```
   export PATH="~/go/bin:$PATH"
   ```
-
 
 ## Configuration
 The app requires a GitHub Token with User and Org permissions; this can be got from:
