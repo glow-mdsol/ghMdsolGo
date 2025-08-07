@@ -2,11 +2,27 @@
 
 A silly little app to streamline the process of checking a users account for the correct setup and adding if ok
 
+## Installation
+* Install go
+  ```
+  brew install go
+  ```
+* Install the tool
+  ```
+  go install github.com/glow-mdsol/ghMdsolGo
+  ```
+* Add your GOBIN path to your path, by adding the following to your `~/.zshrc` or `~/.bashrc`
+  ```
+  export PATH="~/go/bin:$PATH"
+  ```
+
+
 ## Configuration
 The app requires a GitHub Token with User and Org permissions; this can be got from:
 * a `GITHUB_AUTH_TOKEN` environment variable 
 * from a [.netrc](https://www.gnu.org/software/inetutils/manual/html_node/The-_002enetrc-file.html) file.
   * looks for a machine record for `api.github.com`
+
 
 ## Usage
 Usage of the tool is pretty simple
