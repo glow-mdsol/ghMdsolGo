@@ -13,10 +13,10 @@ func isTeam(ctx context.Context, client *Client, org, entityId string) bool {
 		return false
 	}
 	_, resp, err = client.Teams.GetTeamBySlug(ctx, org, entityId)
-	if resp.StatusCode == 200 {
-		return true
+	if err != nil {
+		log.Fatal("Unable to find team ", entityId, " - ", err)
 	}
-	return false
+	return resp.StatusCode == 200
 }
 
 // get a team by name (using the generated slug)

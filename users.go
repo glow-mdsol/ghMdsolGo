@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	. "github.com/google/go-github/v43/github"
-	"golang.org/x/net/context"
 	"log"
 	"net/http"
 	"strings"
+
+	. "github.com/google/go-github/v43/github"
+	"golang.org/x/net/context"
 )
 
 // slugify - generate slugs for github enitities (teams esp.)
@@ -18,10 +19,7 @@ func slugify(teamName string) (slugged string) {
 // isUser - confirm that the entitySlug refers to a user
 func isUser(ctx context.Context, client *Client, entitySlug *string) bool {
 	_, resp, _ := client.Users.Get(ctx, *entitySlug)
-	if resp.StatusCode == 200 {
-		return true
-	}
-	return false
+	return resp.StatusCode == 200
 }
 
 // resolveLogin - resolve an email or login to a user
@@ -59,6 +57,16 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 		prompt(fmt.Sprintf("The account %s is non-conformant (no-public-email), please "+
 			"check the instructions in the room topic. ( fix on https://github.com/settings/profile )", *userId))
 		log.Fatal("User ", *userId, " has no public email")
+	}
+	if ghUser.TwoFactorAuthentication == nil || !*ghUser.TwoFactorAuthentication {
+		prompt(fmt.Sprintf("The account %s is non-conformant (no-2FA), please "+
+			"check the instructions in the room topic. ( fix on https://github.com/settings/security )", *userId))
+		log.Fatal("User ", *userId, "has no 2FA enabled")
+	}
+	if ghUser.Name == nil {
+		prompt(fmt.Sprintf("The account %s is non-conformant (no-name), please "+
+			"check the instructions in the room topic. ( fix on https://github.com/settings/profile )", *userId))
+		log.Fatal("User ", *userId, " has no public name")
 	}
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
