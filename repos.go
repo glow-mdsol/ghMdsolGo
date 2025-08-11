@@ -46,7 +46,7 @@ func isRepository(ctx context.Context, client *github.Client, org, entitySlug st
 		return false
 	}
 	_, resp, err = client.Repositories.Get(ctx, org, entitySlug)
-	if resp.StatusCode == 200 {
+	if err == nil && resp.StatusCode == 200 {
 		return true
 	}
 	return false
@@ -66,8 +66,7 @@ func createRepository(ctx context.Context,
 		return nil, nil
 	}
 
-	var repository *github.Repository
-	repository = &github.Repository{
+	repository := &github.Repository{
 		Name:        github.String(info.name),
 		Private:     github.Bool(true),
 		Description: github.String(info.description)}

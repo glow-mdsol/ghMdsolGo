@@ -75,7 +75,7 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 		}
 		return false, ghUser
 	}
-	result, code = meetsSSOPrequisites(ctx, tc, ghUser)
+	result, _ = meetsSSOPrequisites(ctx, tc, ghUser)
 	if !result {
 		prompt(
 			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
@@ -100,7 +100,7 @@ func main() {
 	getopt.Alias("h", "help")
 	getopt.Parse()
 
-	if *help == true {
+	if *help {
 		fmt.Println("Usage is: ghMdsol <options> <logins or repository names>")
 		fmt.Println("where options are:")
 		getopt.PrintDefaults()
