@@ -148,12 +148,6 @@ func main() {
 			log.Printf("Processing %s", login)
 			// check the user exists
 			if isUser(ctx, client, &login) {
-				// check the user is valid
-				valid, ghUser := userIsValid(ctx, client, tc, login)
-				if !valid {
-					continue
-				}
-
 				// Supply the reset URL
 				if *resetFlag {
 					// copy the reset URL to clipboard
@@ -164,6 +158,13 @@ func main() {
 					)
 					continue
 				}
+
+				// check the user is valid
+				valid, ghUser := userIsValid(ctx, client, tc, login)
+				if !valid {
+					continue
+				}
+
 				if *addToTM {
 					team := getTeamByName(ctx, client, ORG, *teamName)
 					checkAndAddMember(ctx, client, team, ghUser)
