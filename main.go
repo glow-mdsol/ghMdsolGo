@@ -75,7 +75,7 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 		}
 		return false, ghUser
 	}
-	result, code = meetsSSOPrequisites(ctx, tc, ghUser)
+	result, _ = meetsSSOPrequisites(ctx, tc, ghUser)
 	if !result {
 		prompt(
 			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
@@ -100,7 +100,7 @@ func main() {
 	getopt.Alias("h", "help")
 	getopt.Parse()
 
-	if *help == true {
+	if *help {
 		fmt.Println("Usage is: ghMdsol <options> <logins or repository names>")
 		fmt.Println("where options are:")
 		getopt.PrintDefaults()
@@ -148,12 +148,6 @@ func main() {
 			log.Printf("Processing %s", login)
 			// check the user exists
 			if isUser(ctx, client, &login) {
-				// check the user is valid
-				valid, ghUser := userIsValid(ctx, client, tc, login)
-				if !valid {
-					continue
-				}
-
 				// Supply the reset URL
 				if *resetFlag {
 					// copy the reset URL to clipboard
@@ -164,6 +158,13 @@ func main() {
 					)
 					continue
 				}
+
+				// check the user is valid
+				valid, ghUser := userIsValid(ctx, client, tc, login)
+				if !valid {
+					continue
+				}
+
 				if *addToTM {
 					team := getTeamByName(ctx, client, ORG, *teamName)
 					checkAndAddMember(ctx, client, team, ghUser)

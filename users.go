@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 )
 
@@ -17,7 +17,7 @@ func slugify(teamName string) (slugged string) {
 }
 
 // isUser - confirm that the entitySlug refers to a user
-func isUser(ctx context.Context, client *Client, entitySlug *string) bool {
+func isUser(ctx context.Context, client *github.Client, entitySlug *string) bool {
 	_, resp, _ := client.Users.Get(ctx, *entitySlug)
 	return resp.StatusCode == 200
 }
@@ -44,7 +44,7 @@ func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (str
 }
 
 // userPrerequisites - check the prerequisites for a users
-func userPrerequisites(ctx context.Context, client *Client, userId *string) *User {
+func userPrerequisites(ctx context.Context, client *github.Client, userId *string) *github.User {
 	// list all repositories for the authenticated user
 	ghUser, resp, err := client.Users.Get(ctx, *userId)
 	if err != nil {
@@ -58,16 +58,12 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 			"check the instructions in the room topic. ( fix on https://github.com/settings/profile )", *userId))
 		log.Fatal("User ", *userId, " has no public email")
 	}
-	if ghUser.TwoFactorAuthentication == nil || !*ghUser.TwoFactorAuthentication {
-		prompt(fmt.Sprintf("The account %s is non-conformant (no-2FA), please "+
-			"check the instructions in the room topic. ( fix on https://github.com/settings/security )", *userId))
-		log.Fatal("User ", *userId, "has no 2FA enabled")
-	}
 	if ghUser.Name == nil {
 		prompt(fmt.Sprintf("The account %s is non-conformant (no-name), please "+
 			"check the instructions in the room topic. ( fix on https://github.com/settings/profile )", *userId))
 		log.Fatal("User ", *userId, " has no public name")
 	}
+
 	parts := strings.Split(*ghUser.Email, "@")
 	conformant := contains(DOMAINS, parts[1])
 	if !conformant {
@@ -75,14 +71,21 @@ func userPrerequisites(ctx context.Context, client *Client, userId *string) *Use
 			"please check the instructions in the room topic.", *userId, *ghUser.Email))
 		log.Fatal("User", userId, "has non-conformant email address", ghUser.Email)
 	}
+	// This doesn't work unless the user is a member of the org
+	// if ghUser.TwoFactorAuthentication == nil || !*ghUser.TwoFactorAuthentication {
+	// 	prompt(fmt.Sprintf("The account %s is non-conformant (no-2FA), please "+
+	// 		"check the instructions in the room topic. ( fix on https://github.com/settings/security )", *userId))
+	// 	log.Fatal("User ", *userId, "has no 2FA enabled")
+	// }
+
 	log.Println("Validated Pre-requisites for", *userId, "GitHub Email:", *ghUser.Email)
 	return ghUser
 }
 
 // meetsOrgPrequisites - check the users organisational requirements
-func meetsOrgPrequisites(ctx context.Context, client *Client, ghUser *User) (bool, int) {
+func meetsOrgPrequisites(ctx context.Context, client *github.Client, ghUser *github.User) (bool, int) {
 	// check to see if the user is in the org
-	var orgMembership *Membership
+	var orgMembership *github.Membership
 	orgMembership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
@@ -96,10 +99,28 @@ func meetsOrgPrequisites(ctx context.Context, client *Client, ghUser *User) (boo
 }
 
 // meetsSSOPrequisites - check whether the user is SSO enabled
-func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *User) (bool, int) {
+func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *github.User) (bool, int) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)
 	if err != nil || !enabled {
 		return false, 1
 	}
 	return true, 0
 }
+
+// meets2FAPrerequisites - check whether the user has 2FA enabled
+// func meets2FAPrerequisites(ctx context.Context, client *Client, ghUser *User) (bool, int) {
+// 	membership, resp, err := client.Organizations.GetOrgMembership(ctx, *ghUser.Login, ORG)
+// 	if err != nil {
+// 		if resp != nil && resp.StatusCode == 404 {
+// 			return false, 1
+// 		} else {
+// 			log.Printf("Error checking 2FA for user %s: %s", *ghUser.Login, err)
+// 			return false, 2
+// 		}
+// 	}
+// 	if *membership.Role != "member" {
+// 		return false, 3
+// 	}
+
+// 	return true, 0
+// }

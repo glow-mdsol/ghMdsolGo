@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
-	. "github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
 	"log"
 )
 
-func isTeam(ctx context.Context, client *Client, org, entityId string) bool {
+func isTeam(ctx context.Context, client *github.Client, org, entityId string) bool {
 	_, resp, err := client.Organizations.Get(ctx, org)
 	if err != nil || resp.StatusCode == 404 {
 		return false
@@ -20,7 +20,7 @@ func isTeam(ctx context.Context, client *Client, org, entityId string) bool {
 }
 
 // get a team by name (using the generated slug)
-func getTeamByName(ctx context.Context, client *Client, org, teamName string) *Team {
+func getTeamByName(ctx context.Context, client *github.Client, org, teamName string) *github.Team {
 	team, _, err := client.Teams.GetTeamBySlug(ctx, org, slugify(teamName))
 	if err != nil {
 		log.Fatal("Unable to find team ", teamName, " - ", err)
@@ -29,8 +29,8 @@ func getTeamByName(ctx context.Context, client *Client, org, teamName string) *T
 }
 
 // check the prerequisites and if satisfied add the user to the team
-func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *User) {
-	var teamMembership *Membership
+func checkAndAddMember(ctx context.Context, client *github.Client, team *github.Team, ghUser *github.User) {
+	var teamMembership *github.Membership
 	teamMembership, response, err := client.Teams.GetTeamMembershipByID(ctx,
 		*team.Organization.ID,
 		*team.ID,
@@ -40,7 +40,7 @@ func checkAndAddMember(ctx context.Context, client *Client, team *Team, ghUser *
 		log.Fatal("Unable to check team membership: ", err)
 	}
 	if teamMembership == nil {
-		opts := TeamAddTeamMembershipOptions{Role: "member"}
+		opts := github.TeamAddTeamMembershipOptions{Role: "member"}
 		_, _, err = client.Teams.AddTeamMembershipByID(ctx,
 			*team.Organization.ID,
 			*team.ID,
