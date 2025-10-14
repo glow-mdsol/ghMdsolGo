@@ -7,7 +7,6 @@ It will run the following checks on the user account:
 * requires 2-FA enabled
 * requires Name set on account 
 
-Each failure will be copied into your 
 
 ## Installation
 * Install go
@@ -48,9 +47,9 @@ Usage of the tool is pretty simple
     	Specified Team (default "Team ORG")
   -t, --teams
     	List User/Repo Teams  
-    ```
+  ```
 
-### Examples
+### Tools
 
 * User account check
     ```shell
