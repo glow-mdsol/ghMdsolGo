@@ -7,7 +7,6 @@ It will run the following checks on the user account:
 * requires 2-FA enabled
 * requires Name set on account 
 
-Each failure will be copied into your 
 
 ## Installation
 * Install go
@@ -38,6 +37,8 @@ Usage of the tool is pretty simple
   where options are:
   -a, --add
     	Add User to Team ORG
+  -c, --find-common-teams
+        Find teams that have access to ALL specified repositories
   -h, --help
     	Print help
   -r, --reset
@@ -46,9 +47,9 @@ Usage of the tool is pretty simple
     	Specified Team (default "Team ORG")
   -t, --teams
     	List User/Repo Teams  
-    ```
+  ```
 
-### Examples
+### Tools
 
 * User account check
     ```shell
@@ -85,4 +86,40 @@ Usage of the tool is pretty simple
   ```shell
   $ ghMdsolGo -reset someuser@somedomain.com 
   2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
+  ```
+* Find teams that match a set of requested repos
+  ```shell
+  $ ghMdsolGo -c repo1 repo2 repo3
+  Searching for teams that have access to all 3 repositories...
+  Repositories: [repo1 repo2 repo3]
+
+  Repository repo1 has 5 teams with access
+  Repository repo2 has 3 teams with access  
+  Repository repo3 has 4 teams with access
+
+  Found 2 team(s) with access to ALL specified repositories:
+
+  1. Team: DevOps Team
+    Slug: devops-team
+    Description: Infrastructure and deployment team
+    Access Level: admin
+    URL: https://github.com/orgs/mdsol/teams/devops-team
+
+  2. Team: Security Team
+    Slug: security-team
+    Description: Application security team
+    Access Level: maintain
+    URL: https://github.com/orgs/mdsol/teams/security-team
+  These 2 team(s) have access permissions to all 3 repositories listed above.
+
+  $ ghMdsolGo -c repo1 repo2
+
+  Searching for teams that have access to all 2 repositories...
+  Repositories: [repo1 repo2]
+
+  Repository repo1 has 3 teams with access
+  Repository repo2 has 4 teams with access
+
+  No teams found with access to all specified repositories.
+  This means there are no teams that have access to every single repository in the list.
   ```
