@@ -1,10 +1,13 @@
 package main
 
 import (
-	"github.com/google/go-github/v43/github"
-	"golang.org/x/net/context"
+	"fmt"
 	"log"
 	"strings"
+	"sync"
+
+	"github.com/google/go-github/v43/github"
+	"golang.org/x/net/context"
 )
 
 type repositoryInfo struct {
@@ -130,4 +133,131 @@ func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repos
 		})
 	}
 	return teams, nil
+}
+
+// repoTeamsResult holds the result of getting teams for a repository
+type repoTeamsResult struct {
+	repoName string
+	teams    []teamInfo
+	err      error
+}
+
+// findTeamsWithAccessToAllRepos finds teams that have access to all specified repositories
+// It processes repositories in parallel for efficiency by launching separate goroutines
+// for each repository to fetch team information concurrently.
+// Returns a slice of teamInfo structs representing teams that have access to ALL repositories,
+// or an empty slice if no such teams exist.
+func findTeamsWithAccessToAllRepos(ctx context.Context, client *github.Client, owner string, repoNames []string) ([]teamInfo, error) {
+	if len(repoNames) == 0 {
+		return nil, fmt.Errorf("no repository names provided")
+	}
+
+	// Channel to collect results from goroutines
+	resultChan := make(chan repoTeamsResult, len(repoNames))
+	var wg sync.WaitGroup
+
+	// Launch goroutines to get teams for each repository in parallel
+	for _, repoName := range repoNames {
+		wg.Add(1)
+		go func(repo string) {
+			defer wg.Done()
+			teams, err := getRepositoryTeams(ctx, client, owner, repo)
+			resultChan <- repoTeamsResult{
+				repoName: repo,
+				teams:    teams,
+				err:      err,
+			}
+		}(repoName)
+	}
+
+	// Wait for all goroutines to complete and close the channel
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	repoTeamsMap := make(map[string][]teamInfo)
+	var errors []string
+
+	for result := range resultChan {
+		if result.err != nil {
+			errors = append(errors, fmt.Sprintf("Error getting teams for repo %s: %v", result.repoName, result.err))
+			continue
+		}
+		repoTeamsMap[result.repoName] = result.teams
+	}
+
+	// If we had errors getting teams for some repos, report them
+	if len(errors) > 0 {
+		log.Printf("Errors occurred while getting teams for some repositories:")
+		for _, err := range errors {
+			log.Printf("  %s", err)
+		}
+	}
+
+	// If we couldn't get teams for any repository, return error
+	if len(repoTeamsMap) == 0 {
+		return nil, fmt.Errorf("could not get teams for any of the specified repositories")
+	}
+
+	// Find teams that appear in ALL repositories
+	teamAccessCount := make(map[string]int)
+	teamDetails := make(map[string]teamInfo)
+
+	// Count how many repositories each team has access to
+	for repoName, teams := range repoTeamsMap {
+		log.Printf("Repository %s has %d teams with access", repoName, len(teams))
+		for _, team := range teams {
+			teamAccessCount[team.slug]++
+			// Store team details (all repos should have same team details for same slug)
+			teamDetails[team.slug] = team
+		}
+	}
+
+	// Find teams that have access to all successfully processed repositories
+	var commonTeams []teamInfo
+	requiredCount := len(repoTeamsMap)
+
+	for teamSlug, count := range teamAccessCount {
+		if count == requiredCount {
+			commonTeams = append(commonTeams, teamDetails[teamSlug])
+		}
+	}
+
+	return commonTeams, nil
+}
+
+// findAndReportTeamsWithAccessToAllRepos is a convenience function that finds teams
+// with access to all repos and reports the results
+func findAndReportTeamsWithAccessToAllRepos(ctx context.Context, client *github.Client, owner string, repoNames []string) {
+	fmt.Printf("Searching for teams that have access to all %d repositories...\n", len(repoNames))
+	fmt.Printf("Repositories: %v\n\n", repoNames)
+
+	teams, err := findTeamsWithAccessToAllRepos(ctx, client, owner, repoNames)
+	if err != nil {
+		log.Printf("Error finding teams: %v", err)
+		return
+	}
+
+	if len(teams) == 0 {
+		fmt.Printf("No teams found with access to all specified repositories.\n")
+		fmt.Printf("This means there are no teams that have access to every single repository in the list.\n")
+		fmt.Printf("\nTo find teams with access to individual repositories, use the --teams flag with each repository name.\n")
+		return
+	}
+
+	fmt.Printf("Found %d team(s) with access to ALL specified repositories:\n\n", len(teams))
+	for i, team := range teams {
+		fmt.Printf("%d. Team: %s\n", i+1, team.name)
+		fmt.Printf("   Slug: %s\n", team.slug)
+		if team.description != "" {
+			fmt.Printf("   Description: %s\n", team.description)
+		}
+		fmt.Printf("   Access Level: %s\n", team.access)
+		fmt.Printf("   URL: %s\n", team.url)
+		fmt.Printf("\n")
+	}
+
+	fmt.Printf("These %d team(s) have access permissions to all %d repositories listed above.\n", len(teams), len(repoNames))
 }

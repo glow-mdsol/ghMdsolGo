@@ -4,14 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/google/go-github/v43/github"
-	"github.com/jdxcode/netrc"
-	"golang.org/x/oauth2"
 	"log"
 	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
+
+	"github.com/google/go-github/v43/github"
+	"github.com/jdxcode/netrc"
+	"golang.org/x/oauth2"
 	"rsc.io/getopt"
 )
 
@@ -91,11 +92,13 @@ func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
+	var findCommonTeams = flag.Bool("find-common-teams", false, "Find teams that have access to ALL specified repositories")
 	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
 	var help = flag.Bool("help", false, "Print help")
 	getopt.Alias("s", "team")
 	getopt.Alias("a", "add")
 	getopt.Alias("t", "teams")
+	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("h", "help")
 	getopt.Parse()
@@ -113,6 +116,28 @@ func main() {
 	// create a connection
 	ctx, tc, client := connect()
 
+	if *findCommonTeams {
+		// All arguments should be repository names
+		var repoNames []string
+		for _, entitySlug := range userOrRepoList {
+			if entitySlug == "" {
+				continue
+			}
+			if !isRepository(ctx, client, ORG, entitySlug) {
+				log.Printf("Warning: '%s' is not a valid repository in organization '%s', skipping", entitySlug, ORG)
+				continue
+			}
+			repoNames = append(repoNames, entitySlug)
+		}
+
+		if len(repoNames) == 0 {
+			log.Fatal("No valid repositories found in the provided arguments")
+		}
+
+		findAndReportTeamsWithAccessToAllRepos(ctx, client, ORG, repoNames)
+		return
+	}
+
 	for i := 0; i < len(userOrRepoList); i++ {
 		entitySlug := userOrRepoList[i]
 		if entitySlug == "" {
@@ -129,7 +154,7 @@ func main() {
 			// get the teams
 			teams, err := getRepositoryTeams(ctx, client, ORG, entitySlug)
 			if err != nil {
-				log.Printf("Unable to resolve teams for Repostory %s: %s", entitySlug, err)
+				log.Printf("Unable to resolve teams for Repository %s: %s", entitySlug, err)
 				continue
 			}
 			log.Printf("Repository %s has the following teams with access:", entitySlug)
