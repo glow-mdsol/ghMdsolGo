@@ -144,16 +144,16 @@ type repoTeamsResult struct {
 
 // teamMatchResult represents the result of team matching analysis
 type teamMatchResult struct {
-	exactMatches []teamInfo // teams with access to ALL repositories
+	exactMatches []teamInfo      // teams with access to ALL repositories
 	closeMatches []teamMatchInfo // teams with access to over half of repositories
 }
 
 // teamMatchInfo contains team information along with match statistics
 type teamMatchInfo struct {
-	team           teamInfo
-	accessCount    int      // number of repositories this team has access to
-	accessPercent  float64  // percentage of repositories this team has access to
-	missingRepos   []string // repositories this team doesn't have access to
+	team          teamInfo
+	accessCount   int      // number of repositories this team has access to
+	accessPercent float64  // percentage of repositories this team has access to
+	missingRepos  []string // repositories this team doesn't have access to
 }
 
 // findTeamsWithAccessToAllRepos finds teams that have access to all specified repositories
@@ -241,8 +241,7 @@ func findTeamsWithAccessAnalysis(ctx context.Context, client *github.Client, own
 
 	// Analyze team access patterns
 	totalRepos := len(repoTeamsMap)
-	halfThreshold := totalRepos / 2
-	
+
 	var exactMatches []teamInfo
 	var closeMatches []teamMatchInfo
 
@@ -253,8 +252,8 @@ func findTeamsWithAccessAnalysis(ctx context.Context, client *github.Client, own
 		if count == totalRepos {
 			// Exact match - has access to ALL repositories
 			exactMatches = append(exactMatches, team)
-		} else if count > halfThreshold {
-			// Close match - has access to more than half of repositories
+		} else if accessPercent > 50.0 {
+			// Close match - has access to more than 50% of repositories
 			missingRepos := findMissingRepos(teamSlug, repoTeamsMap)
 			closeMatches = append(closeMatches, teamMatchInfo{
 				team:          team,
@@ -274,7 +273,7 @@ func findTeamsWithAccessAnalysis(ctx context.Context, client *github.Client, own
 // findMissingRepos identifies which repositories a team doesn't have access to
 func findMissingRepos(teamSlug string, repoTeamsMap map[string][]teamInfo) []string {
 	var missingRepos []string
-	
+
 	for repoName, teams := range repoTeamsMap {
 		hasAccess := false
 		for _, team := range teams {
@@ -287,7 +286,7 @@ func findMissingRepos(teamSlug string, repoTeamsMap map[string][]teamInfo) []str
 			missingRepos = append(missingRepos, repoName)
 		}
 	}
-	
+
 	return missingRepos
 }
 
