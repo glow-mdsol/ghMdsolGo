@@ -339,8 +339,7 @@ func findAndReportTeamsWithAccessToAllRepos(ctx context.Context, client *github.
 			fmt.Printf("\n")
 		}
 	} else {
-		halfThreshold := len(repoNames) / 2
-		fmt.Printf("🔍 CLOSE MATCHES: No teams found with access to more than %d repositories.\n\n", halfThreshold)
+		fmt.Printf("🔍 CLOSE MATCHES: No teams found with access to more than half of the repositories.\n\n")
 	}
 
 	// Summary
