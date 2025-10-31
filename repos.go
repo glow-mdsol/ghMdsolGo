@@ -142,12 +142,36 @@ type repoTeamsResult struct {
 	err      error
 }
 
+// teamMatchResult represents the result of team matching analysis
+type teamMatchResult struct {
+	exactMatches []teamInfo // teams with access to ALL repositories
+	closeMatches []teamMatchInfo // teams with access to over half of repositories
+}
+
+// teamMatchInfo contains team information along with match statistics
+type teamMatchInfo struct {
+	team           teamInfo
+	accessCount    int      // number of repositories this team has access to
+	accessPercent  float64  // percentage of repositories this team has access to
+	missingRepos   []string // repositories this team doesn't have access to
+}
+
 // findTeamsWithAccessToAllRepos finds teams that have access to all specified repositories
 // It processes repositories in parallel for efficiency by launching separate goroutines
 // for each repository to fetch team information concurrently.
 // Returns a slice of teamInfo structs representing teams that have access to ALL repositories,
 // or an empty slice if no such teams exist.
 func findTeamsWithAccessToAllRepos(ctx context.Context, client *github.Client, owner string, repoNames []string) ([]teamInfo, error) {
+	result, err := findTeamsWithAccessAnalysis(ctx, client, owner, repoNames)
+	if err != nil {
+		return nil, err
+	}
+	return result.exactMatches, nil
+}
+
+// findTeamsWithAccessAnalysis finds teams that have access to repositories with detailed analysis
+// It processes repositories in parallel and returns both exact matches (all repos) and close matches (>50% of repos)
+func findTeamsWithAccessAnalysis(ctx context.Context, client *github.Client, owner string, repoNames []string) (*teamMatchResult, error) {
 	if len(repoNames) == 0 {
 		return nil, fmt.Errorf("no repository names provided")
 	}
@@ -215,49 +239,116 @@ func findTeamsWithAccessToAllRepos(ctx context.Context, client *github.Client, o
 		}
 	}
 
-	// Find teams that have access to all successfully processed repositories
-	var commonTeams []teamInfo
-	requiredCount := len(repoTeamsMap)
+	// Analyze team access patterns
+	totalRepos := len(repoTeamsMap)
+	halfThreshold := totalRepos / 2
+	
+	var exactMatches []teamInfo
+	var closeMatches []teamMatchInfo
 
 	for teamSlug, count := range teamAccessCount {
-		if count == requiredCount {
-			commonTeams = append(commonTeams, teamDetails[teamSlug])
+		team := teamDetails[teamSlug]
+		accessPercent := float64(count) / float64(totalRepos) * 100
+
+		if count == totalRepos {
+			// Exact match - has access to ALL repositories
+			exactMatches = append(exactMatches, team)
+		} else if count > halfThreshold {
+			// Close match - has access to more than half of repositories
+			missingRepos := findMissingRepos(teamSlug, repoTeamsMap)
+			closeMatches = append(closeMatches, teamMatchInfo{
+				team:          team,
+				accessCount:   count,
+				accessPercent: accessPercent,
+				missingRepos:  missingRepos,
+			})
 		}
 	}
 
-	return commonTeams, nil
+	return &teamMatchResult{
+		exactMatches: exactMatches,
+		closeMatches: closeMatches,
+	}, nil
+}
+
+// findMissingRepos identifies which repositories a team doesn't have access to
+func findMissingRepos(teamSlug string, repoTeamsMap map[string][]teamInfo) []string {
+	var missingRepos []string
+	
+	for repoName, teams := range repoTeamsMap {
+		hasAccess := false
+		for _, team := range teams {
+			if team.slug == teamSlug {
+				hasAccess = true
+				break
+			}
+		}
+		if !hasAccess {
+			missingRepos = append(missingRepos, repoName)
+		}
+	}
+	
+	return missingRepos
 }
 
 // findAndReportTeamsWithAccessToAllRepos is a convenience function that finds teams
-// with access to all repos and reports the results
+// with access to all repos and reports the results, including close matches
 func findAndReportTeamsWithAccessToAllRepos(ctx context.Context, client *github.Client, owner string, repoNames []string) {
-	fmt.Printf("Searching for teams that have access to all %d repositories...\n", len(repoNames))
+	fmt.Printf("Analyzing team access patterns for %d repositories...\n", len(repoNames))
 	fmt.Printf("Repositories: %v\n\n", repoNames)
 
-	teams, err := findTeamsWithAccessToAllRepos(ctx, client, owner, repoNames)
+	result, err := findTeamsWithAccessAnalysis(ctx, client, owner, repoNames)
 	if err != nil {
 		log.Printf("Error finding teams: %v", err)
 		return
 	}
 
-	if len(teams) == 0 {
-		fmt.Printf("No teams found with access to all specified repositories.\n")
-		fmt.Printf("This means there are no teams that have access to every single repository in the list.\n")
-		fmt.Printf("\nTo find teams with access to individual repositories, use the --teams flag with each repository name.\n")
-		return
-	}
-
-	fmt.Printf("Found %d team(s) with access to ALL specified repositories:\n\n", len(teams))
-	for i, team := range teams {
-		fmt.Printf("%d. Team: %s\n", i+1, team.name)
-		fmt.Printf("   Slug: %s\n", team.slug)
-		if team.description != "" {
-			fmt.Printf("   Description: %s\n", team.description)
+	// Report exact matches (100% access)
+	if len(result.exactMatches) > 0 {
+		fmt.Printf("🎯 EXACT MATCHES - Teams with access to ALL %d repositories:\n\n", len(repoNames))
+		for i, team := range result.exactMatches {
+			fmt.Printf("%d. Team: %s\n", i+1, team.name)
+			fmt.Printf("   Slug: %s\n", team.slug)
+			if team.description != "" {
+				fmt.Printf("   Description: %s\n", team.description)
+			}
+			fmt.Printf("   Access Level: %s\n", team.access)
+			fmt.Printf("   URL: %s\n", team.url)
+			fmt.Printf("   Coverage: 100%% (%d/%d repositories)\n", len(repoNames), len(repoNames))
+			fmt.Printf("\n")
 		}
-		fmt.Printf("   Access Level: %s\n", team.access)
-		fmt.Printf("   URL: %s\n", team.url)
-		fmt.Printf("\n")
+	} else {
+		fmt.Printf("🎯 EXACT MATCHES: No teams found with access to ALL repositories.\n\n")
 	}
 
-	fmt.Printf("These %d team(s) have access permissions to all %d repositories listed above.\n", len(teams), len(repoNames))
+	// Report close matches (>50% access)
+	if len(result.closeMatches) > 0 {
+		fmt.Printf("🔍 CLOSE MATCHES - Teams with access to more than half of the repositories:\n\n")
+		for i, match := range result.closeMatches {
+			fmt.Printf("%d. Team: %s\n", i+1, match.team.name)
+			fmt.Printf("   Slug: %s\n", match.team.slug)
+			if match.team.description != "" {
+				fmt.Printf("   Description: %s\n", match.team.description)
+			}
+			fmt.Printf("   Access Level: %s\n", match.team.access)
+			fmt.Printf("   URL: %s\n", match.team.url)
+			fmt.Printf("   Coverage: %.1f%% (%d/%d repositories)\n", match.accessPercent, match.accessCount, len(repoNames))
+			if len(match.missingRepos) > 0 {
+				fmt.Printf("   Missing access to: %v\n", match.missingRepos)
+			}
+			fmt.Printf("\n")
+		}
+	} else {
+		halfThreshold := len(repoNames) / 2
+		fmt.Printf("🔍 CLOSE MATCHES: No teams found with access to more than %d repositories.\n\n", halfThreshold)
+	}
+
+	// Summary
+	totalMatches := len(result.exactMatches) + len(result.closeMatches)
+	if totalMatches == 0 {
+		fmt.Printf("📊 SUMMARY: No teams found with significant access coverage.\n")
+		fmt.Printf("To find teams with access to individual repositories, use the --teams flag with each repository name.\n")
+	} else {
+		fmt.Printf("📊 SUMMARY: Found %d exact matches and %d close matches.\n", len(result.exactMatches), len(result.closeMatches))
+	}
 }
