@@ -27,9 +27,10 @@ func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (str
 	// try to resolve user by email (only in context of Org)
 	if strings.Contains(*entitySlug, "@") {
 		// assume email
+		log.Printf("Resolving email %s to login...", *entitySlug)
 		login, err := findUserByEmail(ctx, tc, ORG, *entitySlug)
 		if err != nil {
-			log.Printf("Unable to resolve email %s: %s", login, err)
+			log.Printf("Unable to resolve email %s: %s", *entitySlug, err)
 			return "", err
 		}
 		if login == "" {
@@ -39,6 +40,7 @@ func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (str
 		log.Printf("Resolved email %s to user %s", *entitySlug, login)
 		return login, nil
 	} else {
+		log.Printf("Using provided login: %s", *entitySlug)
 		return *entitySlug, nil
 	}
 }
