@@ -150,7 +150,6 @@ func findUserByEmail(ctx context.Context, httpClient *http.Client, org string, e
 // Get a Users Teams
 func getUserTeams(ctx context.Context, httpClient *http.Client,
 	org string, userLogin string) ([]teamInfo, error) {
-	log.Printf("getUserTeams called with org=%s, userLogin=%s", org, userLogin)
 	var q struct {
 		Organization struct {
 			ID    string
@@ -172,7 +171,6 @@ func getUserTeams(ctx context.Context, httpClient *http.Client,
 		log.Println("Got error querying Team Lists:", err)
 		return nil, err
 	}
-	log.Printf("getUserTeams found %d teams for user %s", q.Organization.Teams.TotalCount, userLogin)
 	var teams []teamInfo
 	for _, team := range q.Organization.Teams.Nodes {
 		teams = append(teams, teamInfo{
