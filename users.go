@@ -100,6 +100,43 @@ func meetsOrgPrequisites(ctx context.Context, client *github.Client, ghUser *git
 	return true, 0
 }
 
+// meets2FAPrerequisites - ensure the user has 2FA enabled
+func meets2FAPrerequisites(ctx context.Context, client *github.Client, ghUser *github.User) (bool, int) {
+	// List all members with 2FA disabled
+	opts := &github.ListMembersOptions{
+		Filter: "2fa_disabled",
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
+
+	// Paginate through all members with 2FA disabled
+	for {
+		members, resp, err := client.Organizations.ListMembers(ctx, ORG, opts)
+		if err != nil {
+			log.Printf("Error listing members with 2FA disabled: %s", err)
+			return false, 2
+		}
+
+		// Check if the user is in the list of 2FA-disabled members
+		for _, member := range members {
+			if member.Login != nil && *member.Login == *ghUser.Login {
+				// User found in 2FA-disabled list
+				return false, 4
+			}
+		}
+
+		// Check if there are more pages
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	// User not found in 2FA-disabled list, so they have 2FA enabled
+	return true, 0
+}
+
 // meetsSSOPrequisites - check whether the user is SSO enabled
 func meetsSSOPrequisites(ctx context.Context, tc *http.Client, ghUser *github.User) (bool, int) {
 	enabled, err := userIsSSO(ctx, tc, ORG, *ghUser.Login)

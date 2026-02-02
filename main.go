@@ -76,12 +76,20 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 		}
 		return false, ghUser
 	}
+	// check SSO requirements
 	result, _ = meetsSSOPrequisites(ctx, tc, ghUser)
 	if !result {
 		prompt(
 			fmt.Sprintf("User %s is not SSO Enabled", *ghUser.Login),
 		)
 		log.Printf("User %s is not SSO enabled", *ghUser.Login)
+		return false, ghUser
+	}
+	// check 2FA is enabled
+	result, code = meets2FAPrerequisites(ctx, client, ghUser)
+	if !result {
+		prompt(fmt.Sprintf("User %s does not have 2FA enabled", *ghUser.Login))
+		log.Printf("User %s does not have 2FA enabled", *ghUser.Login)
 		return false, ghUser
 	}
 	return true, ghUser
