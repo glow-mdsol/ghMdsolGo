@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
@@ -349,4 +350,262 @@ func findAndReportTeamsWithAccessToAllRepos(ctx context.Context, client *github.
 	} else {
 		fmt.Printf("📊 SUMMARY: Found %d exact matches and %d close matches.\n", len(result.exactMatches), len(result.closeMatches))
 	}
+}
+
+// addUserAsRepoCollaborator adds a user as a repository collaborator with admin permission
+// It checks for existing admin collaborators and warns if they were added recently or should be removed
+func addUserAsRepoCollaborator(ctx context.Context, client *github.Client, owner, repo, username string) error {
+	log.Printf("Checking existing collaborators for repository %s/%s", owner, repo)
+
+	// List all collaborators with admin permission
+	opts := &github.ListCollaboratorsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+		Affiliation: "direct", // Only direct collaborators, not team members
+	}
+
+	collaborators, _, err := client.Repositories.ListCollaborators(ctx, owner, repo, opts)
+	if err != nil {
+		return fmt.Errorf("failed to list collaborators: %w", err)
+	}
+
+	// Check for existing admin collaborators
+	now := time.Now()
+	hasOldAdmin := false
+
+	for _, collab := range collaborators {
+		// Check if this collaborator has admin permission
+		if collab.Permissions != nil && collab.Permissions["admin"] {
+			// Skip if it's the user we're trying to add
+			if *collab.Login == username {
+				// Get the invitation/permission details to check when it was added
+				permission, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, username)
+				if err == nil && permission.Permission != nil {
+					log.Printf("⚠️  User %s already has %s access to repository %s/%s", username, *permission.Permission, owner, repo)
+
+					// Try to get invitation info to determine how long ago
+					invitations, _, invErr := client.Repositories.ListInvitations(ctx, owner, repo, nil)
+					if invErr == nil {
+						for _, inv := range invitations {
+							if *inv.Invitee.Login == username {
+								duration := now.Sub(inv.CreatedAt.Time)
+								if duration.Hours() < 24 {
+									fmt.Printf("⚠️  WARNING: User %s already has admin access (added %.1f hours ago)\n", username, duration.Hours())
+									return nil
+								}
+							}
+						}
+					}
+
+					// If we couldn't determine the time, just warn they already have access
+					fmt.Printf("ℹ️  User %s already has admin access to this repository\n", username)
+					return nil
+				}
+				continue
+			}
+
+			// Another user has admin access
+			log.Printf("Found existing admin collaborator: %s", *collab.Login)
+
+			// Try to determine when they were added
+			// Note: GitHub API doesn't directly provide "added date" for collaborators
+			// We can check invitations for pending ones, but for accepted ones we need to check events
+			invitations, _, invErr := client.Repositories.ListInvitations(ctx, owner, repo, nil)
+			addedTime := time.Time{}
+
+			if invErr == nil {
+				for _, inv := range invitations {
+					if inv.Invitee != nil && *inv.Invitee.Login == *collab.Login {
+						addedTime = inv.CreatedAt.Time
+						break
+					}
+				}
+			}
+
+			// If we couldn't find invitation, check recent events
+			if addedTime.IsZero() {
+				events, _, evErr := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
+				if evErr == nil {
+					for _, event := range events {
+						if *event.Type == "MemberEvent" {
+							payload := event.Payload().(*github.MemberEvent)
+							if payload.Member != nil && *payload.Member.Login == *collab.Login {
+								addedTime = *event.CreatedAt
+								break
+							}
+						}
+					}
+				}
+			}
+
+			if !addedTime.IsZero() {
+				duration := now.Sub(addedTime)
+				if duration.Hours() > 24 {
+					fmt.Printf("⚠️  WARNING: User %s has admin access and was added %.1f hours ago (>24h) - should be removed\n",
+						*collab.Login, duration.Hours())
+					hasOldAdmin = true
+				} else {
+					fmt.Printf("⚠️  WARNING: User %s already has admin access (added %.1f hours ago)\n",
+						*collab.Login, duration.Hours())
+				}
+			} else {
+				// Can't determine when they were added, just warn
+				fmt.Printf("⚠️  WARNING: User %s has admin access (added date unknown) - consider reviewing\n", *collab.Login)
+			}
+		}
+	}
+
+	// Add the user as collaborator with admin permission
+	log.Printf("Adding user %s as admin collaborator to repository %s/%s", username, owner, repo)
+
+	opts2 := &github.RepositoryAddCollaboratorOptions{
+		Permission: "admin",
+	}
+
+	_, resp, err := client.Repositories.AddCollaborator(ctx, owner, repo, username, opts2)
+	if err != nil {
+		return fmt.Errorf("failed to add collaborator: %w", err)
+	}
+
+	if resp.StatusCode == 204 {
+		fmt.Printf("✅ User %s already had admin access to repository %s/%s\n", username, owner, repo)
+	} else if resp.StatusCode == 201 {
+		fmt.Printf("✅ Successfully sent admin collaboration invitation to user %s for repository %s/%s\n", username, owner, repo)
+	} else {
+		fmt.Printf("✅ Updated permissions for user %s on repository %s/%s\n", username, owner, repo)
+	}
+
+	if hasOldAdmin {
+		fmt.Printf("\n💡 TIP: Consider removing admin users that were added more than 24 hours ago\n")
+	}
+
+	return nil
+}
+
+// listRepositoryCollaborators lists all collaborators on a repository with their permissions and when they were added
+func listRepositoryCollaborators(ctx context.Context, client *github.Client, owner, repo string) error {
+	log.Printf("Fetching collaborators for repository %s/%s", owner, repo)
+
+	// List all collaborators
+	opts := &github.ListCollaboratorsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+		Affiliation: "direct", // Only direct collaborators, not team members
+	}
+
+	collaborators, _, err := client.Repositories.ListCollaborators(ctx, owner, repo, opts)
+	if err != nil {
+		return fmt.Errorf("failed to list collaborators: %w", err)
+	}
+
+	if len(collaborators) == 0 {
+		fmt.Printf("📋 No direct collaborators found for repository %s/%s\n", owner, repo)
+		fmt.Printf("   (Note: Team members are not included in this list)\n")
+		return nil
+	}
+
+	fmt.Printf("📋 Collaborators for repository %s/%s:\n\n", owner, repo)
+
+	// Get invitations to help determine when collaborators were added
+	invitations, _, _ := client.Repositories.ListInvitations(ctx, owner, repo, nil)
+	invitationMap := make(map[string]*github.RepositoryInvitation)
+	for _, inv := range invitations {
+		if inv.Invitee != nil {
+			invitationMap[*inv.Invitee.Login] = inv
+		}
+	}
+
+	// Get repository events to find when members were added
+	events, _, _ := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
+	eventMap := make(map[string]time.Time)
+	if events != nil {
+		for _, event := range events {
+			if *event.Type == "MemberEvent" {
+				payload := event.Payload().(*github.MemberEvent)
+				if payload.Member != nil && payload.Action != nil && *payload.Action == "added" {
+					login := *payload.Member.Login
+					if _, exists := eventMap[login]; !exists {
+						eventMap[login] = *event.CreatedAt
+					}
+				}
+			}
+		}
+	}
+
+	now := time.Now()
+
+	for i, collab := range collaborators {
+		fmt.Printf("%d. 👤 User: %s\n", i+1, *collab.Login)
+
+		// Determine permission level
+		var permissions []string
+		if collab.Permissions != nil {
+			if collab.Permissions["admin"] {
+				permissions = append(permissions, "admin")
+			}
+			if collab.Permissions["maintain"] {
+				permissions = append(permissions, "maintain")
+			}
+			if collab.Permissions["push"] {
+				permissions = append(permissions, "push")
+			}
+			if collab.Permissions["triage"] {
+				permissions = append(permissions, "triage")
+			}
+			if collab.Permissions["pull"] {
+				permissions = append(permissions, "pull")
+			}
+		}
+
+		if len(permissions) > 0 {
+			fmt.Printf("   🔐 Permissions: %s\n", strings.Join(permissions, ", "))
+		}
+
+		// Get detailed permission level
+		permission, _, permErr := client.Repositories.GetPermissionLevel(ctx, owner, repo, *collab.Login)
+		if permErr == nil && permission.Permission != nil {
+			fmt.Printf("   📊 Access Level: %s\n", *permission.Permission)
+		}
+
+		// Try to determine when they were added
+		var addedTime time.Time
+		var addedSource string
+
+		// Check invitations first
+		if inv, exists := invitationMap[*collab.Login]; exists {
+			addedTime = inv.CreatedAt.Time
+			addedSource = "invitation"
+		}
+
+		// Check events if not found in invitations
+		if addedTime.IsZero() {
+			if eventTime, exists := eventMap[*collab.Login]; exists {
+				addedTime = eventTime
+				addedSource = "event"
+			}
+		}
+
+		if !addedTime.IsZero() {
+			duration := now.Sub(addedTime)
+			fmt.Printf("   📅 Added: %s (%.1f hours ago)\n", addedTime.Format("2006-01-02 15:04:05"), duration.Hours())
+			if addedSource == "invitation" {
+				fmt.Printf("   ℹ️  Status: Invitation pending\n")
+			}
+
+			// Warn if admin access is old
+			if collab.Permissions != nil && collab.Permissions["admin"] && duration.Hours() > 24 {
+				fmt.Printf("   ⚠️  WARNING: Admin access granted >24 hours ago - consider reviewing\n")
+			}
+		} else {
+			fmt.Printf("   📅 Added: Unknown (not found in recent events)\n")
+		}
+
+		if collab.HTMLURL != nil {
+			fmt.Printf("   🔗 Profile: %s\n", *collab.HTMLURL)
+		}
+
+		fmt.Printf("\n")
+	}
+
+	fmt.Printf("📊 Total: %d direct collaborator(s)\n", len(collaborators))
+
+	return nil
 }

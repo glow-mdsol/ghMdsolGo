@@ -34,37 +34,48 @@ The app requires a GitHub Token with User and Org permissions; this can be got f
 ## Usage
 Usage of the tool is pretty simple
   ```shell
-  Usage of ghMdsolGo:
   Usage is: ghMdsol <options> <logins or repository names>
   where options are:
   -a, --add
-    	Add User to Team ORG
+        Add User to Team Default
+  -A, --add-repo-admin
+        Add user as admin collaborator to repository
   -c, --find-common-teams
         Find teams that have access to ALL specified repositories
   -h, --help
-    	Print help
+        Print help
+  -L, --list-repo-collaborators
+        List collaborators on repository with permissions and added dates
+  -R, --repo string
+        Repository name for repo operations
   -r, --reset
-    	Generate the Reset link
+        Generate the Reset link
   -s, --team string
-    	Specified Team (default "Team ORG")
+        Specified Team (default "Team Default")
   -t, --teams
-    	List User/Repo Teams  
+        List User/Repo Teams
   ```
 
 ### Tools
 
 #### User account check
-Verify the alignment of the account with expected configuration (public email address, name on account)
+The `teams` tool can take a repository name, a user name or a user email (which can only be looked up via the SSO)
 
+In the case of a User we run some tests:
     ```shell
-    $ ghMdsolGo -check someuser
+    $ ghMdsolGo -t someuser
     
-    Your account is non-conformant (no-email), please check the instructions in the room topic.
-    2022/05/16 11:00:28 User someuser has no public email
+    2026/02/02 16:20:21 Using provided login: someuser
+    2026/02/02 16:20:21 Processing someuser
+    2026/02/02 16:20:21 Validated Pre-requisites for someuser GitHub Email: someuser@email.com
     ```
+It will run the following validation checks:
+* User has a public email address
+* User has a name
+* User is a member of the Organisation
+* User has 2FA enabled (we don't check for insecure 2fa at the moment)
 
-#### User Team check
-List the teams a user has access to
+Once the checks are complete it will list the teams a user has access to
   ```shell
   $ ghMdsolGo -teams someuser
   2022/05/16 11:55:52 Validated Pre-requisites for someuser GitHub Email: someuser@somedomain.com
@@ -74,8 +85,7 @@ List the teams a user has access to
   2022/05/16 11:55:53 * Team Bravo (https://github.com/orgs/ORG/teams/team-bravo)
   ...
   ```
-#### Repository Team check
-List the teams that have access to a repository (and what level of access they have)
+If the argument is a repository, list the teams that have access to a repository (and what level of access they have)
   ```shell
   $ ghMdsolGo -teams somerepo
   2022/05/16 11:55:53 Repository somerepo has the following teams with access:
@@ -84,6 +94,7 @@ List the teams that have access to a repository (and what level of access they h
   2022/05/16 11:55:53 * Team Yankee (https://github.com/orgs/ORG/teams/team-yankee) admin
   ...
   ```
+
 #### Reset Invite 
 This is a wrapper for removing the SSO connection for a user (for when SSO doesn't link correctly)
 
@@ -97,6 +108,7 @@ Or, via email
   $ ghMdsolGo -reset someuser@somedomain.com 
   2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
   ```
+
 #### Team Matching
 Find teams that match a set of requested repos (or teans that are a close match)
 

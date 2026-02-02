@@ -76,6 +76,7 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 		}
 		return false, ghUser
 	}
+	// check SSO requirements
 	result, _ = meetsSSOPrequisites(ctx, tc, ghUser)
 	if !result {
 		prompt(
@@ -84,19 +85,32 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 		log.Printf("User %s is not SSO enabled", *ghUser.Login)
 		return false, ghUser
 	}
+	// check 2FA is enabled
+	result, code = meets2FAPrerequisites(ctx, client, ghUser)
+	if !result {
+		prompt(fmt.Sprintf("User %s does not have 2FA enabled", *ghUser.Login))
+		log.Printf("User %s does not have 2FA enabled", *ghUser.Login)
+		return false, ghUser
+	}
 	return true, ghUser
 }
 
 // Go time!
 func main() {
 	var teamName = flag.String("team", TeamMedidata, "Specified Team")
+	var repoName = flag.String("repo", "", "Repository name for repo operations")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var entityTeams = flag.Bool("teams", false, "List User/Repo Teams")
 	var findCommonTeams = flag.Bool("find-common-teams", false, "Find teams that have access to ALL specified repositories")
 	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
+	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
+	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
 	var help = flag.Bool("help", false, "Print help")
 	getopt.Alias("s", "team")
+	getopt.Alias("R", "repo")
 	getopt.Alias("a", "add")
+	getopt.Alias("A", "add-repo-admin")
+	getopt.Alias("L", "list-repo-collaborators")
 	getopt.Alias("t", "teams")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
@@ -110,11 +124,67 @@ func main() {
 		os.Exit(0)
 	}
 	var userOrRepoList = flag.Args()
-	if len(userOrRepoList) == 0 {
-		log.Fatal("Usage is: ghMdsol <options> <logins or repository names>")
-	}
+
 	// create a connection
 	ctx, tc, client := connect()
+
+	if *listRepoCollaborators {
+		// List collaborators on repository
+		if *repoName == "" {
+			log.Fatal("--repo flag is required when using --list-repo-collaborators")
+		}
+		if !isRepository(ctx, client, ORG, *repoName) {
+			log.Fatalf("Repository '%s' not found in organization '%s'", *repoName, ORG)
+		}
+
+		err := listRepositoryCollaborators(ctx, client, ORG, *repoName)
+		if err != nil {
+			log.Printf("Error listing collaborators for repository %s: %s", *repoName, err)
+		}
+		return
+	}
+
+	if *addRepoAdmin {
+		// Add user as admin collaborator to repository
+		if *repoName == "" {
+			log.Fatal("--repo flag is required when using --add-repo-admin")
+		}
+		if !isRepository(ctx, client, ORG, *repoName) {
+			log.Fatalf("Repository '%s' not found in organization '%s'", *repoName, ORG)
+		}
+		if len(userOrRepoList) == 0 {
+			log.Fatal("At least one username or email is required")
+		}
+
+		for _, entitySlug := range userOrRepoList {
+			if entitySlug == "" {
+				continue
+			}
+
+			// Resolve email to login if needed
+			login, err := resolveLogin(ctx, tc, &entitySlug)
+			if err != nil {
+				log.Printf("Unable to resolve %s: %s", entitySlug, err)
+				continue
+			}
+			if login == "" {
+				continue
+			}
+
+			// Check if user exists
+			if !isUser(ctx, client, &login) {
+				log.Printf("User %s not found", login)
+				continue
+			}
+
+			// Add user as admin collaborator
+			err = addUserAsRepoCollaborator(ctx, client, ORG, *repoName, login)
+			if err != nil {
+				log.Printf("Error adding user %s as admin to repository %s: %s", login, *repoName, err)
+			}
+		}
+		return
+	}
 
 	if *findCommonTeams {
 		// All arguments should be repository names
@@ -136,6 +206,11 @@ func main() {
 
 		findAndReportTeamsWithAccessToAllRepos(ctx, client, ORG, repoNames)
 		return
+	}
+
+	// For all other operations, we need at least one user or repository argument
+	if len(userOrRepoList) == 0 {
+		log.Fatal("Usage is: ghMdsol <options> <logins or repository names>")
 	}
 
 	for i := 0; i < len(userOrRepoList); i++ {

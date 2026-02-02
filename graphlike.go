@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"github.com/shurcooL/githubv4"
 	"log"
 	"net/http"
+
+	"github.com/shurcooL/githubv4"
 )
 
 type teamInfo struct {

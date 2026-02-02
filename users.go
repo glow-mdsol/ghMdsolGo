@@ -27,9 +27,10 @@ func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (str
 	// try to resolve user by email (only in context of Org)
 	if strings.Contains(*entitySlug, "@") {
 		// assume email
+		log.Printf("Resolving email %s to login...", *entitySlug)
 		login, err := findUserByEmail(ctx, tc, ORG, *entitySlug)
 		if err != nil {
-			log.Printf("Unable to resolve email %s: %s", login, err)
+			log.Printf("Unable to resolve email %s: %s", *entitySlug, err)
 			return "", err
 		}
 		if login == "" {
@@ -39,6 +40,7 @@ func resolveLogin(ctx context.Context, tc *http.Client, entitySlug *string) (str
 		log.Printf("Resolved email %s to user %s", *entitySlug, login)
 		return login, nil
 	} else {
+		log.Printf("Using provided login: %s", *entitySlug)
 		return *entitySlug, nil
 	}
 }
@@ -95,6 +97,43 @@ func meetsOrgPrequisites(ctx context.Context, client *github.Client, ghUser *git
 		}
 	}
 	log.Println("User", *ghUser.Login, "is a", *orgMembership.Role, "of", ORG)
+	return true, 0
+}
+
+// meets2FAPrerequisites - ensure the user has 2FA enabled
+func meets2FAPrerequisites(ctx context.Context, client *github.Client, ghUser *github.User) (bool, int) {
+	// List all members with 2FA disabled
+	opts := &github.ListMembersOptions{
+		Filter: "2fa_disabled",
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
+
+	// Paginate through all members with 2FA disabled
+	for {
+		members, resp, err := client.Organizations.ListMembers(ctx, ORG, opts)
+		if err != nil {
+			log.Printf("Error listing members with 2FA disabled: %s", err)
+			return false, 2
+		}
+
+		// Check if the user is in the list of 2FA-disabled members
+		for _, member := range members {
+			if member.Login != nil && *member.Login == *ghUser.Login {
+				// User found in 2FA-disabled list
+				return false, 4
+			}
+		}
+
+		// Check if there are more pages
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	// User not found in 2FA-disabled list, so they have 2FA enabled
 	return true, 0
 }
 
