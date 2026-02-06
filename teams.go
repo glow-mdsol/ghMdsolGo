@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"strings"
+
 	"github.com/google/go-github/v43/github"
 	"golang.org/x/net/context"
-	"log"
 )
 
 func isTeam(ctx context.Context, client *github.Client, org, entityId string) bool {
@@ -54,4 +56,94 @@ func checkAndAddMember(ctx context.Context, client *github.Client, team *github.
 	} else {
 		log.Println("User", *ghUser.Login, "is already a member of", *team.Name)
 	}
+}
+
+// summarizeTeam provides a summary of team information including member count and repository access
+func summarizeTeam(ctx context.Context, client *github.Client, team *github.Team) string {
+	var summary strings.Builder
+
+	// Get team members count
+	membersOpts := &github.TeamListTeamMembersOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	memberCount := 0
+	for {
+		members, resp, err := client.Teams.ListTeamMembersByID(ctx, *team.Organization.ID, *team.ID, membersOpts)
+		if err != nil {
+			log.Printf("Error getting team members: %v", err)
+			break
+		}
+		memberCount += len(members)
+		if resp.NextPage == 0 {
+			break
+		}
+		membersOpts.Page = resp.NextPage
+	}
+
+	// Get team repositories
+	reposOpts := &github.ListOptions{PerPage: 100}
+	allRepos := make(map[string][]*github.Repository) // grouped by permission
+	totalRepoCount := 0
+	for {
+		repos, resp, err := client.Teams.ListTeamReposByID(ctx, *team.Organization.ID, *team.ID, reposOpts)
+		if err != nil {
+			log.Printf("Error getting team repositories: %v", err)
+			break
+		}
+		for _, repo := range repos {
+			permission := "read" // default
+			if repo.Permissions != nil {
+				if repo.Permissions["admin"] {
+					permission = "admin"
+				} else if repo.Permissions["maintain"] {
+					permission = "maintain"
+				} else if repo.Permissions["push"] {
+					permission = "write"
+				} else if repo.Permissions["triage"] {
+					permission = "triage"
+				}
+			}
+			allRepos[permission] = append(allRepos[permission], repo)
+			totalRepoCount++
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		reposOpts.Page = resp.NextPage
+	}
+
+	// Build summary
+	summary.WriteString(fmt.Sprintf("Team: %s\n", *team.Name))
+	if team.Description != nil && *team.Description != "" {
+		summary.WriteString(fmt.Sprintf("Description: %s\n", *team.Description))
+	}
+	summary.WriteString(fmt.Sprintf("Members: %d\n", memberCount))
+	summary.WriteString(fmt.Sprintf("Total Repositories: %d\n", totalRepoCount))
+
+	if totalRepoCount > 0 {
+		summary.WriteString("\nRepositories by Permission:\n")
+
+		// Order of permissions to display
+		permissionOrder := []string{"admin", "maintain", "write", "triage", "read"}
+
+		for _, perm := range permissionOrder {
+			repos, exists := allRepos[perm]
+			if !exists || len(repos) == 0 {
+				continue
+			}
+
+			summary.WriteString(fmt.Sprintf("\n  %s (%d):\n", perm, len(repos)))
+
+			limit := 10
+			for i, repo := range repos {
+				if i >= limit {
+					summary.WriteString("    ...\n")
+					break
+				}
+				summary.WriteString(fmt.Sprintf("    - %s\n", *repo.Name))
+			}
+		}
+	}
+
+	return summary.String()
 }
