@@ -125,13 +125,16 @@ func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repos
 	}
 	var teams []teamInfo
 	for _, team := range repoTeams {
-		teams = append(teams, teamInfo{
-			name:        *team.Name,
-			description: *team.Description,
-			slug:        *team.Slug,
-			url:         *team.HTMLURL,
-			access:      *team.Permission,
-		})
+		info := teamInfo{
+			name:   *team.Name,
+			slug:   *team.Slug,
+			url:    *team.HTMLURL,
+			access: *team.Permission,
+		}
+		if team.Description != nil {
+			info.description = *team.Description
+		}
+		teams = append(teams, info)
 	}
 	return teams, nil
 }
