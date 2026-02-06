@@ -105,6 +105,7 @@ func main() {
 	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
+	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
 	var help = flag.Bool("help", false, "Print help")
 	getopt.Alias("s", "team")
 	getopt.Alias("R", "repo")
@@ -114,19 +115,63 @@ func main() {
 	getopt.Alias("t", "teams")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
+	getopt.Alias("d", "describe-team")
 	getopt.Alias("h", "help")
 	getopt.Parse()
 
 	if *help {
-		fmt.Println("Usage is: ghMdsol <options> <logins or repository names>")
-		fmt.Println("where options are:")
-		getopt.PrintDefaults()
+		fmt.Println("ghMdsol - GitHub Medidata Organization Management Tool")
+		fmt.Println("\nUSAGE:")
+		fmt.Println("  ghMdsol [options] <usernames/emails or repository names>")
+		fmt.Println("\nUSER OPERATIONS:")
+		fmt.Println("  -a, --add                    Add users to a team (use with --team)")
+		fmt.Println("  -r, --reset                  Generate SSO reset link for users")
+		fmt.Println("  -t, --teams                  List teams for users or repositories")
+		fmt.Println("\nTEAM OPERATIONS:")
+		fmt.Println("  -d, --describe-team          Show detailed summary of a team (use with --team)")
+		fmt.Println("\nREPOSITORY OPERATIONS:")
+		fmt.Println("  -A, --add-repo-admin         Add users as admin collaborators to a repository (requires --repo)")
+		fmt.Println("  -L, --list-repo-collaborators")
+		fmt.Println("                               List all collaborators on a repository (requires --repo)")
+		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
+		fmt.Println("\nOPTIONS:")
+		fmt.Println("  -s, --team <name>            Specify team name (default: 'Team Medidata')")
+		fmt.Println("  -R, --repo <name>            Specify repository name for repo operations")
+		fmt.Println("  -h, --help                   Show this help message")
+		fmt.Println("\nEXAMPLES:")
+		fmt.Println("  # Add users to Team Medidata")
+		fmt.Println("  ghMdsol --add user1 user2@mdsol.com")
+		fmt.Println("\n  # Add users to a specific team")
+		fmt.Println("  ghMdsol --add --team 'Engineering Team' user1 user2")
+		fmt.Println("\n  # Generate SSO reset link")
+		fmt.Println("  ghMdsol --reset username")
+		fmt.Println("\n  # List teams for a user")
+		fmt.Println("  ghMdsol --teams user1")
+		fmt.Println("\n  # List teams with access to a repository")
+		fmt.Println("  ghMdsol --teams my-repo")
+		fmt.Println("\n  # Add user as admin to a repository")
+		fmt.Println("  ghMdsol --add-repo-admin --repo my-repo user1 user2")
+		fmt.Println("\n  # List all collaborators on a repository")
+		fmt.Println("  ghMdsol --list-repo-collaborators --repo my-repo")
+		fmt.Println("\n  # Find teams with access to multiple repositories")
+		fmt.Println("  ghMdsol --find-common-teams repo1 repo2 repo3")
+		fmt.Println("\n  # Show detailed summary of a team")
+		fmt.Println("  ghMdsol --describe-team --team 'Engineering Team'")
 		os.Exit(0)
 	}
 	var userOrRepoList = flag.Args()
 
 	// create a connection
 	ctx, tc, client := connect()
+
+	if *describeTeam {
+		// Describe a team with detailed summary
+		team := getTeamByName(ctx, client, ORG, *teamName)
+		log.Printf("Got team '%s' for '%s'", *team.Name, *teamName)
+		summary := summarizeTeam(ctx, client, team)
+		fmt.Println(summary)
+		return
+	}
 
 	if *listRepoCollaborators {
 		// List collaborators on repository
