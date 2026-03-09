@@ -1,12 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
 
 	"github.com/google/go-github/v43/github"
-	"golang.org/x/net/context"
 )
 
 func isTeam(ctx context.Context, client *github.Client, org, entityId string) bool {

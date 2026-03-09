@@ -159,6 +159,7 @@ func main() {
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
 	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
+	var userRepoAccess = flag.Bool("user-repo-access", false, "Report a user's effective access to a repository via team membership (requires --repo)")
 	var initFlag = flag.Bool("init", false, "Initialize configuration file")
 	var rotateTokenFlag = flag.Bool("rotate-token", false, "Rotate/update GitHub token in configuration")
 	var help = flag.Bool("help", false, "Print help")
@@ -170,6 +171,7 @@ func main() {
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("d", "describe-team")
+	getopt.Alias("u", "user-repo-access")
 	getopt.Alias("i", "init")
 	getopt.Alias("t", "rotate-token")
 	getopt.Alias("h", "help")
@@ -203,6 +205,7 @@ func main() {
 		fmt.Println("  -L, --list-repo-collaborators")
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
 		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
+		fmt.Println("  -u, --user-repo-access       Report a user's effective access to a repository via team membership (requires --repo)")
 		fmt.Println("\nOPTIONS:")
 		fmt.Printf("  -s, --team <name>            Specify team name (default: '%s')\n", defaultTeam)
 		fmt.Println("  -R, --repo <name>            Specify repository name for repo operations")
@@ -302,6 +305,28 @@ func main() {
 			if err != nil {
 				log.Printf("Error adding user %s as admin to repository %s: %s", login, *repoName, err)
 			}
+		}
+		return
+	}
+
+	if *userRepoAccess {
+		// Report a user's effective access to a repository via their team memberships
+		if *repoName == "" {
+			log.Fatal("--repo flag is required when using --user-repo-access")
+		}
+		if !isRepository(ctx, client, ORG, *repoName) {
+			log.Fatalf("Repository '%s' not found in organization '%s'", *repoName, ORG)
+		}
+		if len(userOrRepoList) == 0 {
+			log.Fatal("A username or email is required when using --user-repo-access")
+		}
+		userSlug := userOrRepoList[0]
+		login, err := resolveLogin(ctx, tc, &userSlug)
+		if err != nil || login == "" {
+			log.Fatalf("Unable to resolve user '%s'", userSlug)
+		}
+		if err := reportUserRepoAccess(ctx, client, tc, ORG, login, *repoName); err != nil {
+			log.Printf("Error generating access report: %s", err)
 		}
 		return
 	}

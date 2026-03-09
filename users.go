@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/google/go-github/v43/github"
-	"golang.org/x/net/context"
 )
 
 // slugify - generate slugs for github enitities (teams esp.)

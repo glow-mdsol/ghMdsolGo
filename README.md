@@ -190,6 +190,8 @@ Usage of the tool is pretty simple
         Generate the Reset link
   -s, --team string
         Specified Team (default "Team Medidata")
+  -u, --user-repo-access
+        Report a user's effective access to a repository via team membership (requires --repo)
   
   Note: Without any flags, the tool lists teams for the specified user or repository.
   ```
@@ -231,6 +233,26 @@ If the argument is a repository, list the teams that have access to a repository
   2022/05/16 11:55:53 * Team Bravo (https://github.com/orgs/ORG/teams/team-bravo) push
   2022/05/16 11:55:53 * Team Yankee (https://github.com/orgs/ORG/teams/team-yankee) admin
   ...
+  ```
+
+#### User Repository Access Report
+Report a user's effective (highest) permission level on a specific repository, broken down by which teams grant that access.
+
+Accepts a username or email address. Use `--repo` to specify the target repository.
+  ```shell
+  $ ghMdsolGo --user-repo-access --repo somerepo someuser
+  Access report: someuser → mdsol/somerepo
+
+  Effective permission: write
+
+  Via teams:
+    - Team Alpha (https://github.com/orgs/ORG/teams/team-alpha): read
+    - Team Bravo (https://github.com/orgs/ORG/teams/team-bravo): write
+  ```
+
+Also works with email:
+  ```shell
+  $ ghMdsolGo --user-repo-access --repo somerepo someuser@somedomain.com
   ```
 
 #### Reset Invite 
