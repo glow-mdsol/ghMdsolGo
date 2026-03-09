@@ -430,9 +430,13 @@ func addUserAsRepoCollaborator(ctx context.Context, client *github.Client, owner
 				events, _, evErr := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
 				if evErr == nil {
 					for _, event := range events {
-						if *event.Type == "MemberEvent" {
-							payload := event.Payload().(*github.MemberEvent)
-							if payload.Member != nil && *payload.Member.Login == *collab.Login {
+						if event.GetType() == "MemberEvent" {
+							payload, err := event.ParsePayload()
+							if err != nil {
+								continue
+							}
+							memberEvent, ok := payload.(*github.MemberEvent)
+							if ok && memberEvent.Member != nil && *memberEvent.Member.Login == *collab.Login {
 								addedTime = *event.CreatedAt
 								break
 							}
@@ -520,15 +524,17 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 	// Get repository events to find when members were added
 	events, _, _ := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
 	eventMap := make(map[string]time.Time)
-	if events != nil {
-		for _, event := range events {
-			if *event.Type == "MemberEvent" {
-				payload := event.Payload().(*github.MemberEvent)
-				if payload.Member != nil && payload.Action != nil && *payload.Action == "added" {
-					login := *payload.Member.Login
-					if _, exists := eventMap[login]; !exists {
-						eventMap[login] = *event.CreatedAt
-					}
+	for _, event := range events {
+		if event.GetType() == "MemberEvent" {
+			payload, err := event.ParsePayload()
+			if err != nil {
+				continue
+			}
+			memberEvent, ok := payload.(*github.MemberEvent)
+			if ok && memberEvent.Member != nil && memberEvent.GetAction() == "added" {
+				login := *memberEvent.Member.Login
+				if _, exists := eventMap[login]; !exists {
+					eventMap[login] = *event.CreatedAt
 				}
 			}
 		}
