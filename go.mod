@@ -7,7 +7,6 @@ require (
 	github.com/jdxcode/netrc v1.0.0
 	github.com/shurcooL/githubv4 v0.0.0-20260209031235-2402fdf4a9ed
 	golang.design/x/clipboard v0.7.1
-	golang.org/x/net v0.50.0
 	golang.org/x/oauth2 v0.35.0
 	rsc.io/getopt v0.0.0-20170811000552-20be20937449
 )

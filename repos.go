@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/go-github/v43/github"
-	"golang.org/x/net/context"
 )
 
 type repositoryInfo struct {
@@ -429,9 +430,13 @@ func addUserAsRepoCollaborator(ctx context.Context, client *github.Client, owner
 				events, _, evErr := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
 				if evErr == nil {
 					for _, event := range events {
-						if *event.Type == "MemberEvent" {
-							payload := event.Payload().(*github.MemberEvent)
-							if payload.Member != nil && *payload.Member.Login == *collab.Login {
+						if event.GetType() == "MemberEvent" {
+							payload, err := event.ParsePayload()
+							if err != nil {
+								continue
+							}
+							memberEvent, ok := payload.(*github.MemberEvent)
+							if ok && memberEvent.Member != nil && *memberEvent.Member.Login == *collab.Login {
 								addedTime = *event.CreatedAt
 								break
 							}
@@ -519,15 +524,17 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 	// Get repository events to find when members were added
 	events, _, _ := client.Activity.ListRepositoryEvents(ctx, owner, repo, &github.ListOptions{PerPage: 100})
 	eventMap := make(map[string]time.Time)
-	if events != nil {
-		for _, event := range events {
-			if *event.Type == "MemberEvent" {
-				payload := event.Payload().(*github.MemberEvent)
-				if payload.Member != nil && payload.Action != nil && *payload.Action == "added" {
-					login := *payload.Member.Login
-					if _, exists := eventMap[login]; !exists {
-						eventMap[login] = *event.CreatedAt
-					}
+	for _, event := range events {
+		if event.GetType() == "MemberEvent" {
+			payload, err := event.ParsePayload()
+			if err != nil {
+				continue
+			}
+			memberEvent, ok := payload.(*github.MemberEvent)
+			if ok && memberEvent.Member != nil && memberEvent.GetAction() == "added" {
+				login := *memberEvent.Member.Login
+				if _, exists := eventMap[login]; !exists {
+					eventMap[login] = *event.CreatedAt
 				}
 			}
 		}
@@ -609,6 +616,92 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 	}
 
 	fmt.Printf("📊 Total: %d direct collaborator(s)\n", len(collaborators))
+
+	return nil
+}
+
+// userRepoTeamAccess holds a team and the permission level it grants on a specific repository.
+type userRepoTeamAccess struct {
+	team       teamInfo
+	permission string
+}
+
+// normalizePermission maps raw GitHub API permission strings to human-readable labels.
+func normalizePermission(raw string) string {
+	switch raw {
+	case "pull":
+		return "read"
+	case "push":
+		return "write"
+	default:
+		return raw
+	}
+}
+
+// permissionLevel returns a numeric ranking for a permission string (higher = more access).
+func permissionLevel(perm string) int {
+	switch perm {
+	case "admin":
+		return 5
+	case "maintain":
+		return 4
+	case "write":
+		return 3
+	case "triage":
+		return 2
+	case "read":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// reportUserRepoAccess prints a report of a user's effective access to a repository
+// by cross-referencing their team memberships with the teams that have access to the repo.
+func reportUserRepoAccess(ctx context.Context, client *github.Client, tc *http.Client, org, userLogin, repoName string) error {
+	userTeams, err := getUserTeams(ctx, tc, org, userLogin)
+	if err != nil {
+		return fmt.Errorf("unable to get teams for user %s: %w", userLogin, err)
+	}
+
+	repoTeams, err := getRepositoryTeams(ctx, client, org, repoName)
+	if err != nil {
+		return fmt.Errorf("unable to get teams for repository %s: %w", repoName, err)
+	}
+
+	// Build a slug → normalized-permission map for teams with repo access.
+	repoTeamPermissions := make(map[string]string)
+	for _, t := range repoTeams {
+		repoTeamPermissions[t.slug] = normalizePermission(t.access)
+	}
+
+	// Find which of the user's teams also have access to this repo.
+	var matches []userRepoTeamAccess
+	for _, ut := range userTeams {
+		if perm, ok := repoTeamPermissions[ut.slug]; ok {
+			matches = append(matches, userRepoTeamAccess{team: ut, permission: perm})
+		}
+	}
+
+	if len(matches) == 0 {
+		fmt.Printf("User %s has no team-based access to repository %s/%s\n", userLogin, org, repoName)
+		return nil
+	}
+
+	// Determine the highest (most permissive) level across all matching teams.
+	effectivePerm := ""
+	for _, m := range matches {
+		if permissionLevel(m.permission) > permissionLevel(effectivePerm) {
+			effectivePerm = m.permission
+		}
+	}
+
+	fmt.Printf("Access report: %s → %s/%s\n\n", userLogin, org, repoName)
+	fmt.Printf("Effective permission: %s\n\n", effectivePerm)
+	fmt.Printf("Via teams:\n")
+	for _, m := range matches {
+		fmt.Printf("  - %s (%s): %s\n", m.team.name, m.team.url, m.permission)
+	}
 
 	return nil
 }
