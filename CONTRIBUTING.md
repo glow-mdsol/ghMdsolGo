@@ -65,7 +65,7 @@ Key packages used:
 
 | Package | Purpose |
 |---|---|
-| `github.com/google/go-github/v43` | GitHub REST API (v3) |
+| `github.com/google/go-github/v84` | GitHub REST API (v3) |
 | `github.com/shurcooL/githubv4` | GitHub GraphQL API (v4) – SSO, team membership |
 | `golang.org/x/oauth2` | Token-based HTTP client |
 | `rsc.io/getopt` | POSIX-style flag aliases |
