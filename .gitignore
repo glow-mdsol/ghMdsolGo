@@ -1,2 +1,7 @@
 # Ignore the binary
 ghMdsolGo
+
+coverage.out
+
+# Ignore the vendor directory
+vendor/
