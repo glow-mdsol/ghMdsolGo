@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with coverage
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')
+          THRESHOLD=20.0
+          echo "Coverage: ${COVERAGE}%  (threshold: ${THRESHOLD}%)"
+          awk -v cov="$COVERAGE" -v thr="$THRESHOLD" 'BEGIN {
+            if (cov + 0 < thr + 0) {
+              print "FAIL: coverage " cov "% is below threshold " thr "%"
+              exit 1
+            }
+            print "OK: coverage " cov "% meets threshold " thr "%"
+          }'
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 14
