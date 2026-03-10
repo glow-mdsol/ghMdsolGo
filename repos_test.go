@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -465,5 +467,757 @@ func TestFindTeamsWithAccessAnalysis_NoOverlap(t *testing.T) {
 	}
 	if len(result.closeMatches) != 0 {
 		t.Errorf("closeMatches = %d, want 0", len(result.closeMatches))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findTeamsWithAccessToAllRepos – delegation wrapper
+// ---------------------------------------------------------------------------
+
+func TestFindTeamsWithAccessToAllRepos_Delegates(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	for _, repo := range []string{"r1", "r2"} {
+		repo := repo
+		mux.HandleFunc("/repos/mdsol/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"name": repo, "owner": map[string]string{"login": "mdsol"}})
+		})
+		mux.HandleFunc("/repos/mdsol/"+repo+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, []map[string]interface{}{
+				{"name": "Team X", "slug": "team-x", "html_url": "https://github.com", "permission": "push"},
+			})
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	teams, err := findTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"r1", "r2"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(teams) != 1 || teams[0].slug != "team-x" {
+		t.Errorf("teams = %v, want [{slug:team-x}]", teams)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// createRepository
+// ---------------------------------------------------------------------------
+
+func TestCreateRepository_AlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/existing-repo", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "existing-repo", "owner": map[string]string{"login": "mdsol"}})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	info := repositoryInfo{owner: "mdsol", name: "existing-repo", description: "test"}
+	result, err := createRepository(ctx, client, info)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != nil {
+		t.Error("expected nil result when repo already exists")
+	}
+}
+
+func TestCreateRepository_GetError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/some-repo", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	info := repositoryInfo{owner: "mdsol", name: "some-repo"}
+	_, err := createRepository(ctx, client, info)
+	if err == nil {
+		t.Error("expected error when GET fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// enableVulnerabilityAlerts
+// ---------------------------------------------------------------------------
+
+func TestEnableVulnerabilityAlerts_AlreadyEnabled(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusNoContent) // 204 → enabled=true
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableVulnerabilityAlerts(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if enabled {
+		t.Error("expected false when alerts were already enabled")
+	}
+}
+
+func TestEnableVulnerabilityAlerts_EnablesNew(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// go-github v43 treats 404 as "not enabled" (returns false, nil)
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		// PUT – enable them
+		w.WriteHeader(http.StatusNoContent)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableVulnerabilityAlerts(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !enabled {
+		t.Error("expected true when alerts were newly enabled")
+	}
+}
+
+func TestEnableVulnerabilityAlerts_GetError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/missing-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		// 500 causes a genuine GET-level error (not the 404 "not enabled" path)
+		http.Error(w, `{"message":"Internal Server Error"}`, http.StatusInternalServerError)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := enableVulnerabilityAlerts(ctx, client, "mdsol", "missing-repo")
+	if err == nil {
+		t.Error("expected error when repo not found, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// listRepositoryCollaborators
+// ---------------------------------------------------------------------------
+
+func TestListRepositoryCollaborators_Empty(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListRepositoryCollaborators_WithCollaborator(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login":    "user1",
+				"html_url": "https://github.com/user1",
+				"permissions": map[string]bool{
+					"admin": false, "maintain": false,
+					"push": true, "triage": false, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/events", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/user1/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "write",
+			"user":       map[string]string{"login": "user1"},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListRepositoryCollaborators_APIError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err == nil {
+		t.Error("expected error when API returns 403, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// addUserAsRepoCollaborator
+// ---------------------------------------------------------------------------
+
+func TestAddUserAsRepoCollaborator_NewInvitation(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{}) // no existing collaborators
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/newuser", func(w http.ResponseWriter, r *http.Request) {
+		// PUT adds the collaborator → 201 invitation created
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]interface{}{"id": 1})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddUserAsRepoCollaborator_AlreadyHasAccess(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/existinguser", func(w http.ResponseWriter, r *http.Request) {
+		// PUT → 204 means user already had access
+		w.WriteHeader(http.StatusNoContent)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "existinguser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddUserAsRepoCollaborator_OtherAdminUnknownDate(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		// Another user is already an admin
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login": "other-admin",
+				"permissions": map[string]bool{
+					"admin": true, "push": true, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/events", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/newuser", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]interface{}{"id": 1})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddUserAsRepoCollaborator_APIError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err == nil {
+		t.Error("expected error when ListCollaborators fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findAndReportTeamsWithAccessToAllRepos
+// ---------------------------------------------------------------------------
+
+func TestFindAndReportTeamsWithAccessToAllRepos_ExactMatch(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	for _, repo := range []string{"r1", "r2"} {
+		repo := repo
+		mux.HandleFunc("/repos/mdsol/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"name": repo, "owner": map[string]string{"login": "mdsol"}})
+		})
+		mux.HandleFunc("/repos/mdsol/"+repo+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, []map[string]interface{}{
+				{"name": "All Access Team", "slug": "all-access-team", "html_url": "https://github.com", "permission": "push"},
+			})
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	// Must not panic/error; side effects are only stdout logging.
+	findAndReportTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"r1", "r2"})
+}
+
+func TestFindAndReportTeamsWithAccessToAllRepos_NoMatch(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	for i, repo := range []string{"r1", "r2"} {
+		repo := repo
+		i := i
+		slug := fmt.Sprintf("team-%d", i)
+		mux.HandleFunc("/repos/mdsol/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"name": repo, "owner": map[string]string{"login": "mdsol"}})
+		})
+		mux.HandleFunc("/repos/mdsol/"+repo+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, []map[string]interface{}{
+				{"name": "Team " + slug, "slug": slug, "html_url": "https://github.com", "permission": "push"},
+			})
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	findAndReportTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"r1", "r2"})
+}
+
+// ---------------------------------------------------------------------------
+// listRepositoryCollaborators – invitation and admin paths
+// ---------------------------------------------------------------------------
+
+func TestListRepositoryCollaborators_WithInvitation(t *testing.T) {
+	// Collaborator found via invitation (added time from invitation source).
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login":    "user1",
+				"html_url": "https://github.com/user1",
+				"permissions": map[string]bool{
+					"admin": false, "maintain": false,
+					"push": true, "triage": false, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"id":         1,
+				"invitee":    map[string]string{"login": "user1"},
+				"created_at": "2023-01-01T00:00:00Z",
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/events", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/user1/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "write",
+			"user":       map[string]string{"login": "user1"},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListRepositoryCollaborators_AdminOldInvitation(t *testing.T) {
+	// Admin user with a very old invitation → "Admin access granted >24 hours ago" warning.
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login":    "admin1",
+				"html_url": "https://github.com/admin1",
+				"permissions": map[string]bool{
+					"admin": true, "maintain": false,
+					"push": true, "triage": false, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"id":         1,
+				"invitee":    map[string]string{"login": "admin1"},
+				"created_at": "2020-01-01T00:00:00Z", // very old → >24h warning
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/events", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/admin1/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "admin",
+			"user":       map[string]string{"login": "admin1"},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// addUserAsRepoCollaborator – target user already has admin access
+// ---------------------------------------------------------------------------
+
+func TestAddUserAsRepoCollaborator_TargetUserAlreadyAdmin(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	// The user being added already appears in the collaborators list as admin.
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login": "newuser",
+				"permissions": map[string]bool{
+					"admin": true, "maintain": false,
+					"push": true, "triage": false, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/newuser/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "admin",
+			"user":       map[string]string{"login": "newuser"},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// getRepositoryTeams – ListTeams API error path
+// ---------------------------------------------------------------------------
+
+func TestGetRepositoryTeams_TeamsAPIError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/error-repo", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "error-repo", "owner": map[string]string{"login": "mdsol"}})
+	})
+	mux.HandleFunc("/repos/mdsol/error-repo/teams", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := getRepositoryTeams(ctx, client, "mdsol", "error-repo")
+	if err == nil {
+		t.Error("expected error when ListTeams fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findTeamsWithAccessAnalysis – error and partial-error paths
+// ---------------------------------------------------------------------------
+
+func TestFindTeamsWithAccessAnalysis_AllReposFail(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/bad1", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/mdsol/bad2", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := findTeamsWithAccessAnalysis(ctx, client, "mdsol", []string{"bad1", "bad2"})
+	if err == nil {
+		t.Error("expected error when all repos fail, got nil")
+	}
+}
+
+func TestFindTeamsWithAccessAnalysis_PartialRepoError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/good-repo", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "good-repo", "owner": map[string]string{"login": "mdsol"}})
+	})
+	mux.HandleFunc("/repos/mdsol/good-repo/teams", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "Team A", "slug": "team-a", "html_url": "https://github.com", "permission": "push"},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/bad-repo", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	result, err := findTeamsWithAccessAnalysis(ctx, client, "mdsol", []string{"good-repo", "bad-repo"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// team-a has access to 1/1 accessible repos → exact match.
+	if len(result.exactMatches) != 1 {
+		t.Errorf("exactMatches = %d, want 1", len(result.exactMatches))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// addUserAsRepoCollaborator – other admin found in recent invitation (hasOldAdmin)
+// ---------------------------------------------------------------------------
+
+func TestAddUserAsRepoCollaborator_OtherAdminViaInvitation(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login": "other-admin",
+				"permissions": map[string]bool{
+					"admin": true, "push": true, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		// Old invitation for other-admin → hasOldAdmin=true and TIP message at end.
+		writeJSON(w, []map[string]interface{}{
+			{
+				"id":         2,
+				"invitee":    map[string]string{"login": "other-admin"},
+				"created_at": "2020-01-01T00:00:00Z",
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/newuser", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, map[string]interface{}{"id": 1})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findAndReportTeamsWithAccessToAllRepos – close matches + exact matches
+// ---------------------------------------------------------------------------
+
+func TestFindAndReportTeamsWithAccessToAllRepos_WithCloseMatch(t *testing.T) {
+	ctx := context.Background()
+	// r1+r2: Team A + Team B; r3: only Team A.
+	// Team A → exact (3/3), Team B → close (2/3 = 67%).
+	bothTeams := []map[string]interface{}{
+		{"name": "Team A", "slug": "team-a", "html_url": "https://github.com", "permission": "push"},
+		{"name": "Team B", "slug": "team-b", "html_url": "https://github.com", "permission": "pull"},
+	}
+	onlyA := []map[string]interface{}{
+		{"name": "Team A", "slug": "team-a", "html_url": "https://github.com", "permission": "push"},
+	}
+	configs := []struct {
+		repo  string
+		teams []map[string]interface{}
+	}{
+		{"r1", bothTeams}, {"r2", bothTeams}, {"r3", onlyA},
+	}
+	mux := http.NewServeMux()
+	for _, c := range configs {
+		c := c
+		mux.HandleFunc("/repos/mdsol/"+c.repo, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"name": c.repo, "owner": map[string]string{"login": "mdsol"}})
+		})
+		mux.HandleFunc("/repos/mdsol/"+c.repo+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, c.teams)
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	findAndReportTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"r1", "r2", "r3"})
+}
+
+func TestFindAndReportTeamsWithAccessToAllRepos_AnalysisError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	for _, repo := range []string{"x1", "x2"} {
+		repo := repo
+		mux.HandleFunc("/repos/mdsol/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	findAndReportTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"x1", "x2"})
+}
+
+// ---------------------------------------------------------------------------
+// findTeamsWithAccessToAllRepos – error bubble-up path
+// ---------------------------------------------------------------------------
+
+func TestFindTeamsWithAccessToAllRepos_Error(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	// Both repos return 404 → analysis errors → wrapper returns nil, error.
+	for _, repo := range []string{"fail1", "fail2"} {
+		repo := repo
+		mux.HandleFunc("/repos/mdsol/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		})
+	}
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	teams, err := findTeamsWithAccessToAllRepos(ctx, client, "mdsol", []string{"fail1", "fail2"})
+	if err == nil {
+		t.Error("expected error when all repos fail, got nil")
+	}
+	if teams != nil {
+		t.Errorf("expected nil teams on error, got %v", teams)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// listRepositoryCollaborators – added-time from MemberEvent
+// ---------------------------------------------------------------------------
+
+func TestListRepositoryCollaborators_WithMemberEvent(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login":    "user1",
+				"html_url": "https://github.com/user1",
+				"permissions": map[string]bool{
+					"admin": false, "maintain": false,
+					"push": true, "triage": false, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []interface{}{}) // no invitations for user1
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/events", func(w http.ResponseWriter, r *http.Request) {
+		// Return a MemberEvent for user1 → eventMap gets populated.
+		writeJSON(w, []map[string]interface{}{
+			{
+				"type":       "MemberEvent",
+				"created_at": "2023-06-01T12:00:00Z",
+				"payload": map[string]interface{}{
+					"action": "added",
+					"member": map[string]string{"login": "user1"},
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/user1/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "write",
+			"user":       map[string]string{"login": "user1"},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := listRepositoryCollaborators(ctx, client, "mdsol", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// addUserAsRepoCollaborator – target user has recent admin invitation (< 24h)
+// ---------------------------------------------------------------------------
+
+func TestAddUserAsRepoCollaborator_TargetUserRecentAdmin(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{
+				"login": "newuser",
+				"permissions": map[string]bool{
+					"admin": true, "push": true, "pull": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/collaborators/newuser/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"permission": "admin",
+			"user":       map[string]string{"login": "newuser"},
+		})
+	})
+	mux.HandleFunc("/repos/mdsol/my-repo/invitations", func(w http.ResponseWriter, r *http.Request) {
+		// Return a RECENT invitation for newuser → triggers the < 24h early-return path.
+		recentTimestamp := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+		writeJSON(w, []map[string]interface{}{
+			{
+				"id":         1,
+				"invitee":    map[string]string{"login": "newuser"},
+				"created_at": recentTimestamp,
+			},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	err := addUserAsRepoCollaborator(ctx, client, "mdsol", "my-repo", "newuser")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

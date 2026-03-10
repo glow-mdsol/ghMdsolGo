@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v84/github"
 )
 
 // newTestClient returns a GitHub client whose BaseURL points at a fresh

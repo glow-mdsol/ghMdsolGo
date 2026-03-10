@@ -185,3 +185,23 @@ func TestGetGithubToken_ReadsFromConfig(t *testing.T) {
 		t.Errorf("getGithubToken() = %q, want %q", token, "my-secret-token")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// getConfigDir – XDG_CONFIG_HOME unset (empty) path
+// ---------------------------------------------------------------------------
+
+func TestGetConfigDir_NoXDGConfigHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "") // empty → use ~/.config fallback
+	dir, err := getConfigDir()
+	if err != nil {
+		t.Fatalf("getConfigDir() error: %v", err)
+	}
+	if dir == "" {
+		t.Error("getConfigDir() returned empty path")
+	}
+	homeDir, _ := os.UserHomeDir()
+	want := filepath.Join(homeDir, ".config", "ghMdsolGo")
+	if dir != want {
+		t.Errorf("getConfigDir() = %q, want %q", dir, want)
+	}
+}

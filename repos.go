@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v84/github"
 )
 
 type repositoryInfo struct {
@@ -92,6 +92,7 @@ func createRepository(ctx context.Context,
 	return repo, nil
 }
 
+// enableVulnerabilityAlerts - enable vulnerability alerts for a repository
 func enableVulnerabilityAlerts(ctx context.Context, client *github.Client, owner, repository string) (bool, error) {
 	enabled, _, err := client.Repositories.GetVulnerabilityAlerts(ctx, owner, repository)
 	if err != nil {
@@ -378,7 +379,7 @@ func addUserAsRepoCollaborator(ctx context.Context, client *github.Client, owner
 
 	for _, collab := range collaborators {
 		// Check if this collaborator has admin permission
-		if collab.Permissions != nil && collab.Permissions["admin"] {
+		if collab.Permissions.GetAdmin() {
 			// Skip if it's the user we're trying to add
 			if *collab.Login == username {
 				// Get the invitation/permission details to check when it was added
@@ -437,7 +438,7 @@ func addUserAsRepoCollaborator(ctx context.Context, client *github.Client, owner
 							}
 							memberEvent, ok := payload.(*github.MemberEvent)
 							if ok && memberEvent.Member != nil && *memberEvent.Member.Login == *collab.Login {
-								addedTime = *event.CreatedAt
+								addedTime = event.CreatedAt.Time
 								break
 							}
 						}
@@ -534,7 +535,7 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 			if ok && memberEvent.Member != nil && memberEvent.GetAction() == "added" {
 				login := *memberEvent.Member.Login
 				if _, exists := eventMap[login]; !exists {
-					eventMap[login] = *event.CreatedAt
+					eventMap[login] = event.CreatedAt.Time
 				}
 			}
 		}
@@ -548,19 +549,19 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 		// Determine permission level
 		var permissions []string
 		if collab.Permissions != nil {
-			if collab.Permissions["admin"] {
+			if collab.Permissions.GetAdmin() {
 				permissions = append(permissions, "admin")
 			}
-			if collab.Permissions["maintain"] {
+			if collab.Permissions.GetMaintain() {
 				permissions = append(permissions, "maintain")
 			}
-			if collab.Permissions["push"] {
+			if collab.Permissions.GetPush() {
 				permissions = append(permissions, "push")
 			}
-			if collab.Permissions["triage"] {
+			if collab.Permissions.GetTriage() {
 				permissions = append(permissions, "triage")
 			}
-			if collab.Permissions["pull"] {
+			if collab.Permissions.GetPull() {
 				permissions = append(permissions, "pull")
 			}
 		}
@@ -601,7 +602,7 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 			}
 
 			// Warn if admin access is old
-			if collab.Permissions != nil && collab.Permissions["admin"] && duration.Hours() > 24 {
+			if collab.Permissions.GetAdmin() && duration.Hours() > 24 {
 				fmt.Printf("   ⚠️  WARNING: Admin access granted >24 hours ago - consider reviewing\n")
 			}
 		} else {
