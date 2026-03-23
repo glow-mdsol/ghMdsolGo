@@ -36,24 +36,20 @@ type teamNode struct {
 	URL         string
 }
 
-// Checks if the user is SSO enabled
+// userIsSSO: Checks to see if the user is SSO enabled
 func userIsSSO(ctx context.Context, httpClient *http.Client, org string, login string) (bool, error) {
 	var q struct {
 		Organization struct {
 			SamlIdentityProvider struct {
 				ExternalIdentities struct {
-					Nodes    []samlNode
-					PageInfo struct {
-						EndCursor   githubv4.String
-						HasNextPage githubv4.Boolean
-					}
-				} `graphql:"externalIdentities(first: 100, after: $cursor)"`
+					TotalCount githubv4.Int
+				} `graphql:"externalIdentities(login: $userlogin)"`
 			}
-		} `graphql:"organization(login: $login)"`
+		} `graphql:"organization(login: $orgLogin)"`
 	}
 	variables := map[string]interface{}{
-		"login":  githubv4.String(org),
-		"cursor": (*githubv4.String)(nil), // Null after argument to get first page.
+		"orgLogin":  githubv4.String(org),
+		"userlogin": githubv4.String(login),
 	}
 	client := githubv4.NewClient(httpClient)
 	for {
@@ -63,18 +59,12 @@ func userIsSSO(ctx context.Context, httpClient *http.Client, org string, login s
 			log.Println("Got error querying SSO:", err)
 			return false, err
 		}
-		for _, node := range q.Organization.SamlIdentityProvider.ExternalIdentities.Nodes {
-			if node.User.Login == login {
-				// found the user
-				return true, nil
-			}
+		if q.Organization.SamlIdentityProvider.ExternalIdentities.TotalCount == 0 {
+			return false, nil
+		} else {
+			return true, nil
 		}
-		if !q.Organization.SamlIdentityProvider.ExternalIdentities.PageInfo.HasNextPage {
-			break
-		}
-		variables["cursor"] = githubv4.NewString(q.Organization.SamlIdentityProvider.ExternalIdentities.PageInfo.EndCursor)
 	}
-	return false, nil
 }
 
 func findUserByEmail(ctx context.Context, httpClient *http.Client, org string, email string) (string, error) {
@@ -86,12 +76,12 @@ func findUserByEmail(ctx context.Context, httpClient *http.Client, org string, e
 					Nodes      []samlNode
 				} `graphql:"externalIdentities(first: 100, userName: $email, after: $cursor)"`
 			}
-		} `graphql:"organization(login: $login)"`
+		} `graphql:"organization(login: $orgLogin)"`
 	}
 	variables := map[string]interface{}{
-		"login":  githubv4.String(org),
-		"email":  githubv4.String(email),
-		"cursor": (*githubv4.String)(nil), // Null after argument to get first page.
+		"orgLogin":  githubv4.String(org),
+		"email":     githubv4.String(email),
+		"cursor":    (*githubv4.String)(nil), // Null after argument to get first page.
 	}
 	client := githubv4.NewClient(httpClient)
 	for {
