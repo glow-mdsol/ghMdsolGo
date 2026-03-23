@@ -24,6 +24,11 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
+      - name: Install Linux clipboard dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxfixes-dev xvfb
+
       - name: Build
         run: go build ./...
 
@@ -31,7 +36,7 @@ jobs:
         run: go vet ./...
 
       - name: Test with coverage
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        run: xvfb-run -a go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Check coverage threshold
         run: |
