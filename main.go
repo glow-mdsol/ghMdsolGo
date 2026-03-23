@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v84/github"
 	"github.com/jdxcode/netrc"
 	"golang.org/x/oauth2"
 	"rsc.io/getopt"

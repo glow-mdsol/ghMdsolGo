@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v84/github"
 )
 
 func isTeam(ctx context.Context, client *github.Client, org, entityId string) bool {
@@ -93,13 +93,13 @@ func summarizeTeam(ctx context.Context, client *github.Client, team *github.Team
 		for _, repo := range repos {
 			permission := "read" // default
 			if repo.Permissions != nil {
-				if repo.Permissions["admin"] {
+				if repo.Permissions.GetAdmin() {
 					permission = "admin"
-				} else if repo.Permissions["maintain"] {
+				} else if repo.Permissions.GetMaintain() {
 					permission = "maintain"
-				} else if repo.Permissions["push"] {
+				} else if repo.Permissions.GetPush() {
 					permission = "write"
-				} else if repo.Permissions["triage"] {
+				} else if repo.Permissions.GetTriage() {
 					permission = "triage"
 				}
 			}

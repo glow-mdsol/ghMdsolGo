@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/go-github/v43/github"
+	"github.com/google/go-github/v84/github"
 )
 
 // slugify - generate slugs for github enitities (teams esp.)
