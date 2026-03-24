@@ -184,6 +184,8 @@ Usage of the tool is pretty simple
         Print help
   -L, --list-repo-collaborators
         List collaborators on repository with permissions and added dates (requires --repo)
+  -S, --list-actions-storage
+        List top 10 repositories by GitHub Actions cache storage usage
   -R, --repo string
         Repository name for repo operations
   -r, --reset
@@ -254,6 +256,20 @@ Also works with email:
   ```shell
   $ ghMdsolGo --user-repo-access --repo somerepo someuser@somedomain.com
   ```
+
+#### GitHub Actions Storage Report
+List the top 10 repositories in the organization by GitHub Actions cache storage usage.
+
+```shell
+$ ghMdsolGo --list-actions-storage
+Top 10 repositories by GitHub Actions cache storage in mdsol:
+
+ 1. mdsol/repo-a                               3.00 GiB  4 active caches
+ 2. mdsol/repo-b                             850.0 MiB  2 active caches
+ 3. mdsol/repo-c                              12.0 KiB  1 active caches
+```
+
+This report uses the organization-level Actions cache usage endpoint, so the GitHub token must have at least `read:org` scope.
 
 #### Reset Invite 
 This is a wrapper for removing the SSO connection for a user (for when SSO doesn't link correctly)

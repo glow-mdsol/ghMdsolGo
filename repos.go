@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,98 @@ type repositoryInfo struct {
 	description  string
 	teams        []string
 	templateRepo string
+}
+
+func getActionsCacheUsageByRepoForOrg(ctx context.Context, client *github.Client, org string) ([]*github.ActionsCacheUsage, error) {
+	var usages []*github.ActionsCacheUsage
+	opts := &github.ListOptions{PerPage: 100}
+
+	for {
+		usageList, resp, err := client.Actions.ListCacheUsageByRepoForOrg(ctx, org, opts)
+		if err != nil {
+			return nil, err
+		}
+		if usageList != nil {
+			usages = append(usages, usageList.RepoCacheUsage...)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return usages, nil
+}
+
+func topActionsCacheUsage(usages []*github.ActionsCacheUsage, limit int) []*github.ActionsCacheUsage {
+	if len(usages) == 0 {
+		return nil
+	}
+
+	sorted := append([]*github.ActionsCacheUsage(nil), usages...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ActiveCachesSizeInBytes == sorted[j].ActiveCachesSizeInBytes {
+			return sorted[i].FullName < sorted[j].FullName
+		}
+		return sorted[i].ActiveCachesSizeInBytes > sorted[j].ActiveCachesSizeInBytes
+	})
+
+	if limit <= 0 || limit > len(sorted) {
+		limit = len(sorted)
+	}
+
+	return sorted[:limit]
+}
+
+func formatByteSize(size int64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
+	value := float64(size)
+	unitIndex := 0
+	for value >= 1024 && unitIndex < len(units)-1 {
+		value /= 1024
+		unitIndex++
+	}
+
+	if unitIndex == 0 {
+		return fmt.Sprintf("%d %s", size, units[unitIndex])
+	}
+	if unitIndex == 1 {
+		return fmt.Sprintf("%.1f %s", value, units[unitIndex])
+	}
+
+	return fmt.Sprintf("%.2f %s", value, units[unitIndex])
+}
+
+func formatActionsCacheUsageReport(org string, usages []*github.ActionsCacheUsage, limit int) string {
+	topUsages := topActionsCacheUsage(usages, limit)
+	if len(topUsages) == 0 {
+		return fmt.Sprintf("No repositories are currently using GitHub Actions cache storage in %s.\n", org)
+	}
+
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Top %d repositories by GitHub Actions cache storage in %s:\n\n", len(topUsages), org)
+	for index, usage := range topUsages {
+		fmt.Fprintf(
+			&builder,
+			"%2d. %-40s %10s  %d active caches\n",
+			index+1,
+			usage.FullName,
+			formatByteSize(usage.ActiveCachesSizeInBytes),
+			usage.ActiveCachesCount,
+		)
+	}
+
+	return builder.String()
+}
+
+func listTopActionsCacheUsageByRepo(ctx context.Context, client *github.Client, org string, limit int) error {
+	usages, err := getActionsCacheUsageByRepoForOrg(ctx, client, org)
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(formatActionsCacheUsageReport(org, usages, limit))
+	return nil
 }
 
 // checkRepository - check if a repository exists

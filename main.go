@@ -158,6 +158,7 @@ func main() {
 	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
+	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by GitHub Actions cache storage usage")
 	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
 	var userRepoAccess = flag.Bool("user-repo-access", false, "Report a user's effective access to a repository via team membership (requires --repo)")
 	var initFlag = flag.Bool("init", false, "Initialize configuration file")
@@ -168,6 +169,7 @@ func main() {
 	getopt.Alias("a", "add")
 	getopt.Alias("A", "add-repo-admin")
 	getopt.Alias("L", "list-repo-collaborators")
+	getopt.Alias("S", "list-actions-storage")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("d", "describe-team")
@@ -204,6 +206,7 @@ func main() {
 		fmt.Println("  -A, --add-repo-admin         Add users as admin collaborators to a repository (requires --repo)")
 		fmt.Println("  -L, --list-repo-collaborators")
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
+		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by GitHub Actions cache storage usage")
 		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
 		fmt.Println("  -u, --user-repo-access       Report a user's effective access to a repository via team membership (requires --repo)")
 		fmt.Println("\nOPTIONS:")
@@ -231,6 +234,8 @@ func main() {
 		fmt.Println("  ghMdsolGo --add-repo-admin --repo my-repo user1 user2")
 		fmt.Println("\n  # List all collaborators on a repository")
 		fmt.Println("  ghMdsolGo --list-repo-collaborators --repo my-repo")
+		fmt.Println("\n  # List the top 10 repositories by GitHub Actions cache storage")
+		fmt.Println("  ghMdsolGo --list-actions-storage")
 		fmt.Println("\n  # Find teams with access to multiple repositories")
 		fmt.Println("  ghMdsolGo --find-common-teams repo1 repo2 repo3")
 		fmt.Println("\n  # Show detailed summary of a team")
@@ -263,6 +268,13 @@ func main() {
 		err := listRepositoryCollaborators(ctx, client, ORG, *repoName)
 		if err != nil {
 			log.Printf("Error listing collaborators for repository %s: %s", *repoName, err)
+		}
+		return
+	}
+
+	if *listActionsStorage {
+		if err := listTopActionsCacheUsageByRepo(ctx, client, ORG, 10); err != nil {
+			log.Printf("Error listing GitHub Actions cache storage usage: %s", err)
 		}
 		return
 	}
