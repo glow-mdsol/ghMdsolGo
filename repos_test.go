@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-github/v84/github"
 )
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,113 @@ func TestFindMissingRepos_SomeMissing(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) != 2 || missing[0] != "repo1" || missing[1] != "repo2" {
 		t.Errorf("findMissingRepos(team-c) = %v, want [repo1 repo2]", missing)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// actions cache usage
+// ---------------------------------------------------------------------------
+
+func TestFormatByteSize(t *testing.T) {
+	testCases := []struct {
+		name string
+		size int64
+		want string
+	}{
+		{name: "bytes", size: 512, want: "512 B"},
+		{name: "kibibytes", size: 2048, want: "2.0 KiB"},
+		{name: "mebibytes", size: 5 * 1024 * 1024, want: "5.00 MiB"},
+		{name: "gibibytes", size: 3 * 1024 * 1024 * 1024, want: "3.00 GiB"},
+	}
+
+	for _, tc := range testCases {
+		if got := formatByteSize(tc.size); got != tc.want {
+			t.Errorf("%s: formatByteSize(%d) = %q, want %q", tc.name, tc.size, got, tc.want)
+		}
+	}
+}
+
+func TestTopActionsCacheUsage_SortsAndLimits(t *testing.T) {
+	usages := []*github.ActionsCacheUsage{
+		{FullName: "mdsol/repo-b", ActiveCachesSizeInBytes: 20, ActiveCachesCount: 1},
+		{FullName: "mdsol/repo-c", ActiveCachesSizeInBytes: 20, ActiveCachesCount: 2},
+		{FullName: "mdsol/repo-a", ActiveCachesSizeInBytes: 30, ActiveCachesCount: 3},
+	}
+
+	top := topActionsCacheUsage(usages, 2)
+	if len(top) != 2 {
+		t.Fatalf("len(top) = %d, want 2", len(top))
+	}
+	if top[0].FullName != "mdsol/repo-a" {
+		t.Errorf("top[0] = %q, want %q", top[0].FullName, "mdsol/repo-a")
+	}
+	if top[1].FullName != "mdsol/repo-b" {
+		t.Errorf("top[1] = %q, want %q", top[1].FullName, "mdsol/repo-b")
+	}
+
+	if usages[0].FullName != "mdsol/repo-b" {
+		t.Error("topActionsCacheUsage should not mutate the input slice order")
+	}
+}
+
+func TestFormatActionsCacheUsageReport_NoUsage(t *testing.T) {
+	report := formatActionsCacheUsageReport("mdsol", nil, 10)
+	if !strings.Contains(report, "No repositories are currently using GitHub Actions cache storage in mdsol.") {
+		t.Errorf("unexpected report: %q", report)
+	}
+}
+
+func TestFormatActionsCacheUsageReport_IncludesTopRepos(t *testing.T) {
+	usages := []*github.ActionsCacheUsage{
+		{FullName: "mdsol/repo-a", ActiveCachesSizeInBytes: 3 * 1024 * 1024 * 1024, ActiveCachesCount: 4},
+		{FullName: "mdsol/repo-b", ActiveCachesSizeInBytes: 512, ActiveCachesCount: 1},
+	}
+
+	report := formatActionsCacheUsageReport("mdsol", usages, 10)
+	if !strings.Contains(report, "Top 2 repositories by GitHub Actions cache storage in mdsol:") {
+		t.Errorf("missing header in report: %q", report)
+	}
+	if !strings.Contains(report, "1. mdsol/repo-a") {
+		t.Errorf("missing top repo in report: %q", report)
+	}
+	if !strings.Contains(report, "3.00 GiB") {
+		t.Errorf("missing formatted size in report: %q", report)
+	}
+	if !strings.Contains(report, "4 active caches") {
+		t.Errorf("missing cache count in report: %q", report)
+	}
+}
+
+func TestGetActionsCacheUsageByRepoForOrg(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/mdsol/actions/cache/usage-by-repository", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Errorf("per_page = %q, want 100", got)
+		}
+		writeJSON(w, map[string]interface{}{
+			"total_count": 2,
+			"repository_cache_usages": []map[string]interface{}{
+				{"full_name": "mdsol/repo-a", "active_caches_size_in_bytes": 1000, "active_caches_count": 2},
+				{"full_name": "mdsol/repo-b", "active_caches_size_in_bytes": 500, "active_caches_count": 1},
+			},
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	usages, err := getActionsCacheUsageByRepoForOrg(ctx, client, "mdsol")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(usages) != 2 {
+		t.Fatalf("len(usages) = %d, want 2", len(usages))
+	}
+	if usages[0].FullName != "mdsol/repo-a" {
+		t.Errorf("usages[0].FullName = %q, want %q", usages[0].FullName, "mdsol/repo-a")
+	}
+	if usages[1].ActiveCachesCount != 1 {
+		t.Errorf("usages[1].ActiveCachesCount = %d, want 1", usages[1].ActiveCachesCount)
 	}
 }
 
