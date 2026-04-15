@@ -42,6 +42,15 @@ func getActionsCacheUsageByRepoForOrg(ctx context.Context, client *github.Client
 	return usages, nil
 }
 
+func getActionsStorageBillingForOrg(ctx context.Context, client *github.Client, org string) (*github.StorageBilling, error) {
+	billing, _, err := client.Billing.GetOrganizationStorageBilling(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+
+	return billing, nil
+}
+
 func topActionsCacheUsage(usages []*github.ActionsCacheUsage, limit int) []*github.ActionsCacheUsage {
 	if len(usages) == 0 {
 		return nil
@@ -81,13 +90,22 @@ func formatByteSize(size int64) string {
 	return fmt.Sprintf("%.2f %s", value, units[unitIndex])
 }
 
-func formatActionsCacheUsageReport(org string, usages []*github.ActionsCacheUsage, limit int) string {
+func formatActionsCacheUsageReport(org string, usages []*github.ActionsCacheUsage, billing *github.StorageBilling, limit int) string {
 	topUsages := topActionsCacheUsage(usages, limit)
 	if len(topUsages) == 0 {
 		return fmt.Sprintf("No repositories are currently using GitHub Actions cache storage in %s.\n", org)
 	}
 
 	var builder strings.Builder
+	if billing != nil {
+		fmt.Fprintf(
+			&builder,
+			"Org Actions shared storage billing summary:\n  Billable constrained storage: %d GB-month\n  Estimated total shared storage: %d GB-month\n  Days left in billing cycle: %d\n\n",
+			billing.EstimatedPaidStorageForMonth,
+			billing.EstimatedStorageForMonth,
+			billing.DaysLeftInBillingCycle,
+		)
+	}
 	fmt.Fprintf(&builder, "Top %d repositories by GitHub Actions cache storage in %s:\n\n", len(topUsages), org)
 	for index, usage := range topUsages {
 		fmt.Fprintf(
@@ -109,7 +127,12 @@ func listTopActionsCacheUsageByRepo(ctx context.Context, client *github.Client, 
 		return err
 	}
 
-	fmt.Print(formatActionsCacheUsageReport(org, usages, limit))
+	billing, err := getActionsStorageBillingForOrg(ctx, client, org)
+	if err != nil {
+		log.Printf("Warning: unable to retrieve org Actions storage billing for %s: %v", org, err)
+	}
+
+	fmt.Print(formatActionsCacheUsageReport(org, usages, billing, limit))
 	return nil
 }
 
@@ -711,6 +734,149 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 
 	fmt.Printf("📊 Total: %d direct collaborator(s)\n", len(collaborators))
 
+	return nil
+}
+
+// adminGrantResult holds information about a single admin-access grant event
+// that occurred within the last 24 hours and whose access is still in effect.
+type adminGrantResult struct {
+	repo      string
+	login     string
+	actor     string
+	grantedAt time.Time
+	accessURL string
+}
+
+// getOrgRepos returns all repositories for the given organization.
+// findRecentAdminGrants queries the organisation audit log for repo.add_member
+// events in the last 24 hours where the permission granted was admin, and
+// confirms each user still holds that access.
+//
+// Audit log approach: a handful of paginated API calls regardless of repo count,
+// versus the old per-repo event-scan which made O(repos) parallel calls.
+//
+// Requires the token to have org owner permissions (needed to read the audit log).
+func findRecentAdminGrants(ctx context.Context, client *github.Client, org string) ([]adminGrantResult, error) {
+	since := time.Now().Add(-24 * time.Hour)
+	phrase := "action:repo.add_member"
+	order := "desc"
+
+	opts := &github.GetAuditLogOptions{
+		Phrase:            &phrase,
+		Order:             &order,
+		ListCursorOptions: github.ListCursorOptions{PerPage: 100},
+	}
+
+	seen := make(map[string]bool) // "repo:login" – deduplicate multiple events for the same pair
+	var results []adminGrantResult
+
+	for {
+		entries, resp, err := client.Organizations.GetAuditLog(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query audit log: %w", err)
+		}
+
+		done := false
+		for _, entry := range entries {
+			ts := entry.GetCreatedAt()
+			if ts.Time.Before(since) {
+				done = true
+				break
+			}
+
+			if entry.GetAction() != "repo.add_member" {
+				continue
+			}
+
+			login := entry.GetUser()
+			if login == "" {
+				continue
+			}
+			actor := entry.GetActor()
+			if actor == "" {
+				actor = "unknown"
+			}
+
+			// "repo" is not a first-class AuditEntry field; it lands in AdditionalFields.
+			repoFull, _ := entry.AdditionalFields["repo"].(string)
+			if repoFull == "" {
+				continue
+			}
+			parts := strings.SplitN(repoFull, "/", 2)
+			if len(parts) != 2 || parts[0] != org {
+				continue
+			}
+			repoName := parts[1]
+
+			// Skip non-admin grants immediately if the permission is present in the log.
+			if perm, ok := entry.AdditionalFields["permission"].(string); ok && perm != "admin" {
+				continue
+			}
+
+			key := repoName + ":" + login
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			// Confirm the user still holds admin on this repo (the grant may have been revoked).
+			current, _, permErr := client.Repositories.GetPermissionLevel(ctx, org, repoName, login)
+			if permErr != nil || current.GetPermission() != "admin" {
+				continue
+			}
+
+			results = append(results, adminGrantResult{
+				repo:      repoName,
+				login:     login,
+				actor:     actor,
+				grantedAt: ts.Time,
+				accessURL: fmt.Sprintf("https://github.com/%s/%s/settings/access", org, repoName),
+			})
+		}
+
+		if done || resp == nil || resp.After == "" {
+			break
+		}
+		opts.After = resp.After
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].repo != results[j].repo {
+			return results[i].repo < results[j].repo
+		}
+		return results[i].login < results[j].login
+	})
+	return results, nil
+}
+
+// reportRecentAdminGrants formats the results of findRecentAdminGrants for display.
+func reportRecentAdminGrants(org string, results []adminGrantResult) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("No admin access grants detected in the last 24 hours across %s repositories.\n", org)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Users granted admin access in the last 24 hours (still active) in %s:\n\n", org)
+	for i, r := range results {
+		fmt.Fprintf(&b, "%d. %s → %s\n   Granted by: %s\n   Granted: %s\n   Access settings: %s\n\n",
+			i+1,
+			r.login,
+			r.repo,
+			r.actor,
+			r.grantedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+			r.accessURL,
+		)
+	}
+	return b.String()
+}
+
+// listRecentAdminGrants is the top-level command handler for --recent-admin-grants.
+func listRecentAdminGrants(ctx context.Context, client *github.Client, org string) error {
+	log.Printf("Scanning all repositories in %s for admin grants in the last 24 hours...", org)
+	results, err := findRecentAdminGrants(ctx, client, org)
+	if err != nil {
+		return err
+	}
+	fmt.Print(reportRecentAdminGrants(org, results))
 	return nil
 }
 

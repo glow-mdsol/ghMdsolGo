@@ -17,12 +17,15 @@ import (
 	"rsc.io/getopt"
 )
 
-var DOMAINS = []string{"mdsol.com", "shyftanalytics.com", "3ds.com"}
+var DOMAINS = []string{"example.com", "example.org", "example.net"}
 
 // Default values
-const ORG = "mdsol"
-const TeamMedidata = "Team Medidata"
+const DefaultOrgLogin = "example-org"
+const DefaultTeamName = "Default Team"
 const TokenEnvVar = "GITHUB_AUTH_TOKEN"
+
+// ORG is a runtime-resolved organization login loaded from config.
+var ORG = DefaultOrgLogin
 
 // Helper function
 func contains(s []string, e string) bool {
@@ -150,15 +153,17 @@ func userIsValid(ctx context.Context, client *github.Client, tc *http.Client, us
 
 // Go time!
 func main() {
+	ORG = getOrgLogin()
 	defaultTeam := getDefaultTeam()
 	var teamName = flag.String("team", defaultTeam, "Specified Team")
 	var repoName = flag.String("repo", "", "Repository name for repo operations")
 	var resetFlag = flag.Bool("reset", false, "Generate the Reset link")
 	var findCommonTeams = flag.Bool("find-common-teams", false, "Find teams that have access to ALL specified repositories")
-	var addToTM = flag.Bool("add", false, "Add User to Team Medidata")
+	var addToTM = flag.Bool("add", false, "Add User to Team")
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
-	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by GitHub Actions cache storage usage")
+	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by Actions cache usage and org billable constrained storage")
+	var recentAdminGrants = flag.Bool("recent-admin-grants", false, "List users granted admin access to any org repo in the last 24 hours that still have that access")
 	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
 	var userRepoAccess = flag.Bool("user-repo-access", false, "Report a user's effective access to a repository via team membership (requires --repo)")
 	var initFlag = flag.Bool("init", false, "Initialize configuration file")
@@ -170,6 +175,7 @@ func main() {
 	getopt.Alias("A", "add-repo-admin")
 	getopt.Alias("L", "list-repo-collaborators")
 	getopt.Alias("S", "list-actions-storage")
+	getopt.Alias("G", "recent-admin-grants")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("d", "describe-team")
@@ -194,9 +200,9 @@ func main() {
 	}
 
 	if *help {
-		fmt.Println("ghMdsolGo - GitHub Medidata Organization Management Tool")
+		fmt.Println("ghOrgTool - GitHub Organization Management Tool")
 		fmt.Println("\nUSAGE:")
-		fmt.Println("  ghMdsolGo [options] <usernames/emails or repository names>")
+		fmt.Println("  ghOrgTool [options] <usernames/emails or repository names>")
 		fmt.Println("\nUSER OPERATIONS:")
 		fmt.Println("  -a, --add                    Add users to a team (use with --team)")
 		fmt.Println("  -r, --reset                  Generate SSO reset link for users")
@@ -206,7 +212,8 @@ func main() {
 		fmt.Println("  -A, --add-repo-admin         Add users as admin collaborators to a repository (requires --repo)")
 		fmt.Println("  -L, --list-repo-collaborators")
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
-		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by GitHub Actions cache storage usage")
+		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by Actions cache usage and org billable constrained storage")
+		fmt.Println("  -G, --recent-admin-grants    List users granted admin access to any org repo in the last 24h (still active)")
 		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
 		fmt.Println("  -u, --user-repo-access       Report a user's effective access to a repository via team membership (requires --repo)")
 		fmt.Println("\nOPTIONS:")
@@ -217,29 +224,31 @@ func main() {
 		fmt.Println("  -h, --help                   Show this help message")
 		fmt.Println("\nEXAMPLES:")
 		fmt.Println("  # Initialize configuration (first time setup)")
-		fmt.Println("  ghMdsolGo --init")
+		fmt.Println("  ghOrgTool --init")
 		fmt.Println("\n  # Update/rotate GitHub token")
-		fmt.Println("  ghMdsolGo --rotate-token")
+		fmt.Println("  ghOrgTool --rotate-token")
 		fmt.Println("\n  # List teams for a user (default behavior)")
-		fmt.Println("  ghMdsolGo user1")
+		fmt.Println("  ghOrgTool user1")
 		fmt.Println("\n  # List teams for a repository (default behavior)")
-		fmt.Println("  ghMdsolGo my-repo")
-		fmt.Println("\n  # Add users to Team Medidata")
-		fmt.Println("  ghMdsolGo --add user1 user2@mdsol.com")
+		fmt.Println("  ghOrgTool my-repo")
+		fmt.Println("\n  # Add users to the default team")
+		fmt.Println("  ghOrgTool --add user1 user2@example.com")
 		fmt.Println("\n  # Add users to a specific team")
-		fmt.Println("  ghMdsolGo --add --team 'Engineering Team' user1 user2")
+		fmt.Println("  ghOrgTool --add --team 'Engineering Team' user1 user2")
 		fmt.Println("\n  # Generate SSO reset link")
-		fmt.Println("  ghMdsolGo --reset username")
+		fmt.Println("  ghOrgTool --reset username")
 		fmt.Println("\n  # Add user as admin to a repository")
-		fmt.Println("  ghMdsolGo --add-repo-admin --repo my-repo user1 user2")
+		fmt.Println("  ghOrgTool --add-repo-admin --repo my-repo user1 user2")
 		fmt.Println("\n  # List all collaborators on a repository")
-		fmt.Println("  ghMdsolGo --list-repo-collaborators --repo my-repo")
-		fmt.Println("\n  # List the top 10 repositories by GitHub Actions cache storage")
-		fmt.Println("  ghMdsolGo --list-actions-storage")
+		fmt.Println("  ghOrgTool --list-repo-collaborators --repo my-repo")
+		fmt.Println("\n  # List top repositories by Actions cache usage and show billable constrained storage")
+		fmt.Println("  ghOrgTool --list-actions-storage")
+		fmt.Println("\n  # List users granted admin access to any org repo in the last 24h")
+		fmt.Println("  ghOrgTool --recent-admin-grants")
 		fmt.Println("\n  # Find teams with access to multiple repositories")
-		fmt.Println("  ghMdsolGo --find-common-teams repo1 repo2 repo3")
+		fmt.Println("  ghOrgTool --find-common-teams repo1 repo2 repo3")
 		fmt.Println("\n  # Show detailed summary of a team")
-		fmt.Println("  ghMdsolGo --describe-team --team 'Engineering Team'")
+		fmt.Println("  ghOrgTool --describe-team --team 'Engineering Team'")
 		os.Exit(0)
 	}
 	var userOrRepoList = flag.Args()
@@ -274,7 +283,14 @@ func main() {
 
 	if *listActionsStorage {
 		if err := listTopActionsCacheUsageByRepo(ctx, client, ORG, 10); err != nil {
-			log.Printf("Error listing GitHub Actions cache storage usage: %s", err)
+			log.Printf("Error listing GitHub Actions storage report: %s", err)
+		}
+		return
+	}
+
+	if *recentAdminGrants {
+		if err := listRecentAdminGrants(ctx, client, ORG); err != nil {
+			log.Printf("Error listing recent admin grants: %s", err)
 		}
 		return
 	}
@@ -367,7 +383,7 @@ func main() {
 
 	// For all other operations, we need at least one user or repository argument
 	if len(userOrRepoList) == 0 {
-		log.Fatal("Usage is: ghMdsolGo <options> <logins or repository names>")
+		log.Fatal("Usage is: ghOrgTool <options> <logins or repository names>")
 	}
 
 	// Process each entity (user or repository)
@@ -407,8 +423,8 @@ func main() {
 
 			// Supply the reset URL
 			if *resetFlag {
-				prompt(fmt.Sprintf("https://github.com/orgs/mdsol/people/%s/sso", resolvedName))
-				log.Printf("Reset Link: https://github.com/orgs/mdsol/people/%s/sso", resolvedName)
+				prompt(fmt.Sprintf("https://github.com/orgs/%s/people/%s/sso", ORG, resolvedName))
+				log.Printf("Reset Link: https://github.com/orgs/%s/people/%s/sso", ORG, resolvedName)
 				continue
 			}
 

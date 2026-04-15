@@ -1,4 +1,4 @@
-# ghMDSOLGO
+# ghOrgTool
 
 A silly little app to streamline the process of checking a users account for the correct setup and adding if ok.  
 
@@ -17,7 +17,7 @@ It will use the SSO connection to link a user email to an account, but the user 
   ```
 * Install the tool
   ```
-  go install github.com/glow-mdsol/ghMdsolGo@latest
+  go install github.com/glow-example-org/ghOrgTool@latest
   ```
 * Add your GOBIN path to your path, by adding the following to your `~/.zshrc` or `~/.bashrc`
   ```
@@ -36,18 +36,19 @@ The app requires a GitHub Token with User and Org permissions. The token is load
 ### User Configuration File
 You can customize settings by creating a configuration file. The tool will automatically look for a config file in the following locations based on your operating system:
 
-* **macOS/Linux**: `~/.config/ghMdsolGo/config.json`
-* **Windows**: `%APPDATA%\ghMdsolGo\config.json`
+* **macOS/Linux**: `~/.config/ghOrgTool/config.json`
+* **Windows**: `%APPDATA%\ghOrgTool\config.json`
 
 #### Quick Setup with `--init`
 
 The easiest way to create a configuration file is to use the interactive initialization command:
 
 ```bash
-ghMdsolGo --init
+ghOrgTool --init
 ```
 
 This will:
+- Prompt you for the organization login
 - Prompt you for your default team name
 - Optionally prompt for your GitHub personal access token
 - Create the config file in the correct location for your OS
@@ -55,20 +56,23 @@ This will:
 
 **Example:**
 ```bash
-$ ghMdsolGo --init
+$ ghOrgTool --init
 Configuration Initialization
 ============================
 
-Enter default team name [Team Medidata]: Engineering Team
+Enter organization login [example-org]: sandbox-org
+
+Enter default team name [Default Team]: Engineering Team
 
 Enter GitHub personal access token (optional):
   Leave empty to use GITHUB_AUTH_TOKEN environment variable or .netrc
 Token: ghp_abc123xyz456
 
-✓ Configuration saved to: /Users/username/.config/ghMdsolGo/config.json
+✓ Configuration saved to: /Users/username/.config/ghOrgTool/config.json
 ✓ File permissions set to 600 (user read/write only)
 
 Configuration summary:
+  Organization Login: sandbox-org
   Default Team: Engineering Team
   GitHub Token: ***configured***
 ```
@@ -78,7 +82,7 @@ Configuration summary:
 If you need to update or rotate your GitHub token (e.g., for security reasons or token expiration), use the `--rotate-token` command:
 
 ```bash
-ghMdsolGo --rotate-token
+ghOrgTool --rotate-token
 ```
 
 This will:
@@ -89,7 +93,7 @@ This will:
 
 **Example:**
 ```bash
-$ ghMdsolGo --rotate-token
+$ ghOrgTool --rotate-token
 Rotate GitHub Token
 ===================
 
@@ -99,7 +103,7 @@ Enter new GitHub personal access token:
   Leave empty to remove the token from config
 New Token: ghp_new_token_xyz789
 
-✓ Token updated in: /Users/username/.config/ghMdsolGo/config.json
+✓ Token updated in: /Users/username/.config/ghOrgTool/config.json
 ✓ File permissions verified (600)
 
 ✓ GitHub Token: ***configured***
@@ -113,26 +117,30 @@ The configuration file should be in JSON format and supports the following optio
 
 ```json
 {
+  "org_login": "your-org-login",
   "default_team": "Your Team Name",
   "github_token": "ghp_your_github_token_here"
 }
 ```
 
 **Configuration Options:**
-- `default_team`: The default team name to use when adding users (defaults to "Team Medidata" if not specified)
+- `org_login`: The GitHub organization login used by org-level operations (defaults to "example-org" if not specified)
+- `default_team`: The default team name to use when adding users (defaults to "Default Team" if not specified)
 - `github_token`: Your GitHub personal access token (optional, only if not using environment variable or .netrc)
 
 **Example Configuration:**
 ```json
 {
+  "org_login": "sandbox-org",
   "default_team": "Engineering Team",
   "github_token": "ghp_abc123xyz456"
 }
 ```
 
-**Minimal Configuration (team only):**
+**Minimal Configuration (org + team):**
 ```json
 {
+  "org_login": "sandbox-org",
   "default_team": "Engineering Team"
 }
 ```
@@ -145,21 +153,23 @@ If you prefer to create the configuration file manually instead of using `--init
 
 On macOS/Linux:
 ```bash
-mkdir -p ~/.config/ghMdsolGo
-cat > ~/.config/ghMdsolGo/config.json << 'EOF'
+mkdir -p ~/.config/ghOrgTool
+cat > ~/.config/ghOrgTool/config.json << 'EOF'
 {
+  "org_login": "your-org-login",
   "default_team": "Your Team Name",
   "github_token": "ghp_your_token_here"
 }
 EOF
-chmod 600 ~/.config/ghMdsolGo/config.json
+chmod 600 ~/.config/ghOrgTool/config.json
 ```
 
 On Windows (PowerShell):
 ```powershell
-New-Item -ItemType Directory -Force -Path "$env:APPDATA\ghMdsolGo"
-Set-Content -Path "$env:APPDATA\ghMdsolGo\config.json" -Value @'
+New-Item -ItemType Directory -Force -Path "$env:APPDATA\ghOrgTool"
+Set-Content -Path "$env:APPDATA\ghOrgTool\config.json" -Value @'
 {
+  "org_login": "your-org-login",
   "default_team": "Your Team Name",
   "github_token": "ghp_your_token_here"
 }
@@ -170,7 +180,7 @@ Set-Content -Path "$env:APPDATA\ghMdsolGo\config.json" -Value @'
 ## Usage
 Usage of the tool is pretty simple
   ```shell
-  Usage is: ghMdsolGo <options> <logins or repository names>
+  Usage is: ghOrgTool <options> <logins or repository names>
   where options are:
   -a, --add
         Add users to a team (use with --team)
@@ -185,13 +195,15 @@ Usage of the tool is pretty simple
   -L, --list-repo-collaborators
         List collaborators on repository with permissions and added dates (requires --repo)
   -S, --list-actions-storage
-        List top 10 repositories by GitHub Actions cache storage usage
+      List top 10 repositories by Actions cache usage and org billable constrained storage
+  -G, --recent-admin-grants
+      List users granted admin access to any org repo in the last 24h that still have that access
   -R, --repo string
         Repository name for repo operations
   -r, --reset
         Generate the Reset link
   -s, --team string
-        Specified Team (default "Team Medidata")
+        Specified Team (default "Default Team")
   -u, --user-repo-access
         Report a user's effective access to a repository via team membership (requires --repo)
   
@@ -205,7 +217,7 @@ The tool can take a repository name, a user name or a user email (which can only
 
 In the case of a User we run some tests:
     ```shell
-    $ ghMdsolGo someuser
+    $ ghOrgTool someuser
     
     2026/02/02 16:20:21 Using provided login: someuser
     2026/02/02 16:20:21 Processing someuser
@@ -219,9 +231,9 @@ It will run the following validation checks:
 
 Once the checks are complete it will list the teams a user has access to
   ```shell
-  $ ghMdsolGo someuser
+  $ ghOrgTool someuser
   2022/05/16 11:55:52 Validated Pre-requisites for someuser GitHub Email: someuser@somedomain.com
-  2022/05/16 11:55:52 User someuser is a admin of mdsol
+  2022/05/16 11:55:52 User someuser is a admin of example-org
   2022/05/16 11:55:53 User someuser is a member of the following teams
   2022/05/16 11:55:53 * Team Alpha (https://github.com/orgs/ORG/teams/team-alpha)
   2022/05/16 11:55:53 * Team Bravo (https://github.com/orgs/ORG/teams/team-bravo)
@@ -229,7 +241,7 @@ Once the checks are complete it will list the teams a user has access to
   ```
 If the argument is a repository, list the teams that have access to a repository (and what level of access they have)
   ```shell
-  $ ghMdsolGo somerepo
+  $ ghOrgTool somerepo
   2022/05/16 11:55:53 Repository somerepo has the following teams with access:
   2022/05/16 11:55:53 * Team Alpha (https://github.com/orgs/ORG/teams/team-alpha) pull
   2022/05/16 11:55:53 * Team Bravo (https://github.com/orgs/ORG/teams/team-bravo) push
@@ -242,8 +254,8 @@ Report a user's effective (highest) permission level on a specific repository, b
 
 Accepts a username or email address. Use `--repo` to specify the target repository.
   ```shell
-  $ ghMdsolGo --user-repo-access --repo somerepo someuser
-  Access report: someuser → mdsol/somerepo
+  $ ghOrgTool --user-repo-access --repo somerepo someuser
+  Access report: someuser → example-org/somerepo
 
   Effective permission: write
 
@@ -254,34 +266,59 @@ Accepts a username or email address. Use `--repo` to specify the target reposito
 
 Also works with email:
   ```shell
-  $ ghMdsolGo --user-repo-access --repo somerepo someuser@somedomain.com
+  $ ghOrgTool --user-repo-access --repo somerepo someuser@somedomain.com
   ```
 
 #### GitHub Actions Storage Report
-List the top 10 repositories in the organization by GitHub Actions cache storage usage.
+List the top 10 repositories in the organization by GitHub Actions cache usage and include org-level billable constrained Actions storage.
 
 ```shell
-$ ghMdsolGo --list-actions-storage
-Top 10 repositories by GitHub Actions cache storage in mdsol:
+$ ghOrgTool --list-actions-storage
+Org Actions shared storage billing summary:
+  Billable constrained storage: 42 GB-month
+  Estimated total shared storage: 64 GB-month
+  Days left in billing cycle: 12
 
- 1. mdsol/repo-a                               3.00 GiB  4 active caches
- 2. mdsol/repo-b                             850.0 MiB  2 active caches
- 3. mdsol/repo-c                              12.0 KiB  1 active caches
+Top 10 repositories by GitHub Actions cache storage in example-org:
+
+ 1. example-org/repo-a                               3.00 GiB  4 active caches
+ 2. example-org/repo-b                             850.0 MiB  2 active caches
+ 3. example-org/repo-c                              12.0 KiB  1 active caches
 ```
 
 This report uses the organization-level Actions cache usage endpoint, so the GitHub token must have at least `read:org` scope.
+
+#### Recent Admin Grants
+Scan all repositories in the organization for users who were granted direct admin collaborator access in the last 24 hours and who still hold that access. For each match the settings/access URL is printed so you can review or revoke the grant immediately.
+
+```shell
+$ ghOrgTool --recent-admin-grants
+Users granted admin access in the last 24 hours (still active) in example-org:
+
+1. alice → sample-orchestrator
+  Granted by: org-admin
+   Granted: 2026-04-15 09:12:00 UTC
+   Access settings: https://github.com/example-org/sample-orchestrator/settings/access
+
+2. bob → sample-api
+  Granted by: repo-owner
+   Granted: 2026-04-15 14:05:00 UTC
+   Access settings: https://github.com/example-org/sample-api/settings/access
+```
+
+This command queries the organization audit log and validates current permission on matched users/repositories. The GitHub token must have `repo` and `read:org` scopes, and must be able to read org audit logs.
 
 #### Reset Invite 
 This is a wrapper for removing the SSO connection for a user (for when SSO doesn't link correctly)
 
 This can be done using username; 
   ```shell
-  $ ghMdsolGo --reset someuser 
+  $ ghOrgTool --reset someuser 
   2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
   ```
 Or, via email
   ```shell
-  $ ghMdsolGo --reset someuser@somedomain.com 
+  $ ghOrgTool --reset someuser@somedomain.com 
   2022/05/16 12:02:04 Reset Link: https://github.com/orgs/ORG/people/someuser/sso
   ```
 
@@ -305,7 +342,7 @@ Repository repo5 has 4 teams with access
    Slug: devops-team
    Description: Infrastructure and deployment team
    Access Level: admin
-   URL: https://github.com/orgs/mdsol/teams/devops-team
+   URL: https://github.com/orgs/example-org/teams/devops-team
    Coverage: 100% (5/5 repositories)
 
 🔍 CLOSE MATCHES - Teams with access to more than half of the repositories:
@@ -314,7 +351,7 @@ Repository repo5 has 4 teams with access
    Slug: security-team
    Description: Application security team
    Access Level: maintain
-   URL: https://github.com/orgs/mdsol/teams/security-team
+   URL: https://github.com/orgs/example-org/teams/security-team
    Coverage: 80.0% (4/5 repositories)
    Missing access to: [repo2]
 
@@ -322,7 +359,7 @@ Repository repo5 has 4 teams with access
    Slug: frontend-team
    Description: UI/UX development team
    Access Level: push
-   URL: https://github.com/orgs/mdsol/teams/frontend-team
+   URL: https://github.com/orgs/example-org/teams/frontend-team
    Coverage: 60.0% (3/5 repositories)
    Missing access to: [repo4, repo5]
 
@@ -347,7 +384,7 @@ Repository repo4 has 3 teams with access
    Slug: backend-team
    Description: Server-side development team
    Access Level: maintain
-   URL: https://github.com/orgs/mdsol/teams/backend-team
+   URL: https://github.com/orgs/example-org/teams/backend-team
    Coverage: 75.0% (3/4 repositories)
    Missing access to: [repo2]
 

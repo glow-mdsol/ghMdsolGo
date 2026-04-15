@@ -48,7 +48,7 @@ func TestLoadConfig_InvalidJSON(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 
 	// Write a malformed JSON file directly.
-	cfgDir := filepath.Join(tmpDir, "ghMdsolGo")
+	cfgDir := filepath.Join(tmpDir, "ghOrgTool")
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -140,8 +140,8 @@ func TestGetDefaultTeam_FallsBackToHardcoded(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()+"/nothing")
 
 	team := getDefaultTeam()
-	if team != TeamMedidata {
-		t.Errorf("getDefaultTeam() = %q, want %q", team, TeamMedidata)
+	if team != DefaultTeamName {
+		t.Errorf("getDefaultTeam() = %q, want %q", team, DefaultTeamName)
 	}
 }
 
@@ -187,6 +187,33 @@ func TestGetGithubToken_ReadsFromConfig(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// getOrgLogin
+// ---------------------------------------------------------------------------
+
+func TestGetOrgLogin_FallsBackToDefault(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()+"/nothing")
+
+	org := getOrgLogin()
+	if org != DefaultOrgLogin {
+		t.Errorf("getOrgLogin() = %q, want %q", org, DefaultOrgLogin)
+	}
+}
+
+func TestGetOrgLogin_ReadsFromConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	if err := saveConfig(&Config{OrgLogin: "sandbox-org"}); err != nil {
+		t.Fatalf("saveConfig() error: %v", err)
+	}
+
+	org := getOrgLogin()
+	if org != "sandbox-org" {
+		t.Errorf("getOrgLogin() = %q, want %q", org, "sandbox-org")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // getConfigDir – XDG_CONFIG_HOME unset (empty) path
 // ---------------------------------------------------------------------------
 
@@ -200,7 +227,7 @@ func TestGetConfigDir_NoXDGConfigHome(t *testing.T) {
 		t.Error("getConfigDir() returned empty path")
 	}
 	homeDir, _ := os.UserHomeDir()
-	want := filepath.Join(homeDir, ".config", "ghMdsolGo")
+	want := filepath.Join(homeDir, ".config", "ghOrgTool")
 	if dir != want {
 		t.Errorf("getConfigDir() = %q, want %q", dir, want)
 	}

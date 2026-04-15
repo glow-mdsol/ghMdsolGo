@@ -14,6 +14,7 @@ import (
 // Config represents the user configuration
 type Config struct {
 	DefaultTeam string `json:"default_team"`
+	OrgLogin    string `json:"org_login,omitempty"`
 	GithubToken string `json:"github_token,omitempty"`
 }
 
@@ -30,21 +31,21 @@ func getConfigDir() (string, error) {
 		// On Windows, use %APPDATA%
 		appData := os.Getenv("APPDATA")
 		if appData != "" {
-			configDir = filepath.Join(appData, "ghMdsolGo")
+			configDir = filepath.Join(appData, "ghOrgTool")
 		} else {
-			configDir = filepath.Join(homeDir, "AppData", "Roaming", "ghMdsolGo")
+			configDir = filepath.Join(homeDir, "AppData", "Roaming", "ghOrgTool")
 		}
 	case "darwin", "linux":
 		// On macOS and Linux, use XDG Base Directory specification
 		xdgConfigHome := os.Getenv("XDG_CONFIG_HOME")
 		if xdgConfigHome != "" {
-			configDir = filepath.Join(xdgConfigHome, "ghMdsolGo")
+			configDir = filepath.Join(xdgConfigHome, "ghOrgTool")
 		} else {
-			configDir = filepath.Join(homeDir, ".config", "ghMdsolGo")
+			configDir = filepath.Join(homeDir, ".config", "ghOrgTool")
 		}
 	default:
 		// Fallback for other Unix-like systems
-		configDir = filepath.Join(homeDir, ".config", "ghMdsolGo")
+		configDir = filepath.Join(homeDir, ".config", "ghOrgTool")
 	}
 
 	return configDir, nil
@@ -125,7 +126,16 @@ func getDefaultTeam() string {
 	if config.DefaultTeam != "" {
 		return config.DefaultTeam
 	}
-	return TeamMedidata
+	return DefaultTeamName
+}
+
+// getOrgLogin returns the organization login from config or the hardcoded default.
+func getOrgLogin() string {
+	config := loadConfig()
+	if config.OrgLogin != "" {
+		return config.OrgLogin
+	}
+	return DefaultOrgLogin
 }
 
 // getGithubToken returns the GitHub token from config or empty string if not set
@@ -162,14 +172,24 @@ func initConfig() error {
 
 	config := &Config{}
 
+	// Prompt for organization login
+	fmt.Printf("Enter organization login [%s]: ", DefaultOrgLogin)
+	orgLogin, _ := reader.ReadString('\n')
+	orgLogin = strings.TrimSpace(orgLogin)
+	if orgLogin != "" {
+		config.OrgLogin = orgLogin
+	} else {
+		config.OrgLogin = DefaultOrgLogin
+	}
+
 	// Prompt for default team
-	fmt.Printf("Enter default team name [%s]: ", TeamMedidata)
+	fmt.Printf("Enter default team name [%s]: ", DefaultTeamName)
 	teamName, _ := reader.ReadString('\n')
 	teamName = strings.TrimSpace(teamName)
 	if teamName != "" {
 		config.DefaultTeam = teamName
 	} else {
-		config.DefaultTeam = TeamMedidata
+		config.DefaultTeam = DefaultTeamName
 	}
 
 	// Prompt for GitHub token
@@ -202,6 +222,7 @@ func initConfig() error {
 	}
 	fmt.Println()
 	fmt.Println("Configuration summary:")
+	fmt.Printf("  Organization Login: %s\n", config.OrgLogin)
 	fmt.Printf("  Default Team: %s\n", config.DefaultTeam)
 	if config.GithubToken != "" {
 		fmt.Println("  GitHub Token: ***configured***")
@@ -228,7 +249,7 @@ func rotateToken() error {
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		fmt.Println("No configuration file found.")
-		fmt.Printf("Run 'ghMdsolGo --init' to create a configuration file first.\n")
+		fmt.Printf("Run 'ghOrgTool --init' to create a configuration file first.\n")
 		return nil
 	}
 

@@ -1,4 +1,4 @@
-# Contributing to ghMdsolGo
+# Contributing to ghOrgTool
 
 Thank you for taking the time to contribute! This document covers everything you need to get up and running.
 
@@ -24,8 +24,8 @@ Thank you for taking the time to contribute! This document covers everything you
 1. **Fork** the repository on GitHub, then clone your fork:
 
    ```bash
-   git clone https://github.com/<your-username>/ghMdsolGo.git
-   cd ghMdsolGo
+   git clone https://github.com/<your-username>/ghOrgTool.git
+   cd ghOrgTool
    ```
 
 2. **Install dependencies:**
@@ -49,7 +49,7 @@ Thank you for taking the time to contribute! This document covers everything you
 ## Project Structure
 
 ```
-ghMdsolGo/
+ghOrgTool/
 ├── main.go          # Entry point, flag definitions, top-level dispatch
 ├── repos.go         # Repository helpers and access-report logic
 ├── teams.go         # Team helpers and summarisation
@@ -126,7 +126,7 @@ go test -race ./...
    git push origin feat/my-feature
    ```
 
-2. Open a pull request against `glow-mdsol/ghMdsolGo`'s `main` branch.
+2. Open a pull request against `glow-example-org/ghOrgTool`'s `main` branch.
 
 3. In the PR description, explain:
    - **What** the change does
