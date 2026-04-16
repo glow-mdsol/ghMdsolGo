@@ -17,12 +17,12 @@ import (
 	"rsc.io/getopt"
 )
 
-var DOMAINS = []string{"example.com", "example.org", "example.net"}
-
 // Default values
 const DefaultOrgLogin = "example-org"
 const DefaultTeamName = "Default Team"
 const TokenEnvVar = "GITHUB_AUTH_TOKEN"
+
+var DefaultAcceptableDomains = []string{"example.com", "example.org", "example.net"}
 
 // ORG is a runtime-resolved organization login loaded from config.
 var ORG = DefaultOrgLogin

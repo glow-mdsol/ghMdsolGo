@@ -67,7 +67,9 @@ func userPrerequisites(ctx context.Context, client *github.Client, userId *strin
 	}
 
 	parts := strings.Split(*ghUser.Email, "@")
-	conformant := contains(DOMAINS, parts[1])
+	acceptableDomains := getAcceptableDomains()
+	// fmt.Printf("Checking email domain %s against acceptable domains: %s\n", parts[1], strings.Join(acceptableDomains, ", "))
+	conformant := contains(acceptableDomains, parts[1])
 	if !conformant {
 		prompt(fmt.Sprintf("The account %s (email %s) is non-conformant (incorrect mail domain), "+
 			"please check the instructions in the room topic.", *userId, *ghUser.Email))

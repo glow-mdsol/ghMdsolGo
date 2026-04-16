@@ -13,9 +13,10 @@ import (
 
 // Config represents the user configuration
 type Config struct {
-	DefaultTeam string `json:"default_team"`
-	OrgLogin    string `json:"org_login,omitempty"`
-	GithubToken string `json:"github_token,omitempty"`
+	DefaultTeam       string   `json:"default_team"`
+	OrgLogin          string   `json:"org_login,omitempty"`
+	GithubToken       string   `json:"github_token,omitempty"`
+	AcceptableDomains []string `json:"acceptable_domains,omitempty"`
 }
 
 // getConfigDir returns the appropriate config directory based on the OS
@@ -144,6 +145,15 @@ func getGithubToken() string {
 	return config.GithubToken
 }
 
+// getAcceptableDomains returns the acceptable email domains from config or the hardcoded defaults
+func getAcceptableDomains() []string {
+	config := loadConfig()
+	if len(config.AcceptableDomains) > 0 {
+		return config.AcceptableDomains
+	}
+	return DefaultAcceptableDomains
+}
+
 // initConfig interactively creates a configuration file
 func initConfig() error {
 	reader := bufio.NewReader(os.Stdin)
@@ -192,6 +202,22 @@ func initConfig() error {
 		config.DefaultTeam = DefaultTeamName
 	}
 
+	// Prompt for acceptable email domains
+	fmt.Println()
+	fmt.Printf("Enter acceptable email domains (comma-separated) [%s]: ", strings.Join(DefaultAcceptableDomains, ","))
+	domains, _ := reader.ReadString('\n')
+	domains = strings.TrimSpace(domains)
+	if domains != "" {
+		// Split by comma and trim spaces
+		domainList := strings.Split(domains, ",")
+		for i, domain := range domainList {
+			domainList[i] = strings.TrimSpace(domain)
+		}
+		config.AcceptableDomains = domainList
+	} else {
+		config.AcceptableDomains = DefaultAcceptableDomains
+	}
+
 	// Prompt for GitHub token
 	fmt.Println()
 	fmt.Println("Enter GitHub personal access token (optional):")
@@ -224,6 +250,7 @@ func initConfig() error {
 	fmt.Println("Configuration summary:")
 	fmt.Printf("  Organization Login: %s\n", config.OrgLogin)
 	fmt.Printf("  Default Team: %s\n", config.DefaultTeam)
+	fmt.Printf("  Acceptable Domains: %s\n", strings.Join(config.AcceptableDomains, ", "))
 	if config.GithubToken != "" {
 		fmt.Println("  GitHub Token: ***configured***")
 	} else {
