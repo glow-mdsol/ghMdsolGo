@@ -1391,8 +1391,26 @@ func TestAddUserAsRepoCollaborator_TargetUserRecentAdmin(t *testing.T) {
 
 func TestReportRecentAdminGrants_NoResults(t *testing.T) {
 	got := reportRecentAdminGrants("example-org", nil)
-	if !strings.Contains(got, "No admin access grants detected") {
+	if !strings.Contains(got, "No recent admin access grants detected") {
 		t.Errorf("expected no-results message, got %q", got)
+	}
+}
+
+func TestAdminGrantLookbackSince_Default24Hours(t *testing.T) {
+	now := time.Date(2026, 4, 21, 15, 0, 0, 0, time.UTC) // Wednesday
+	since := adminGrantLookbackSince(now)
+	want := now.Add(-24 * time.Hour)
+	if !since.Equal(want) {
+		t.Errorf("adminGrantLookbackSince(non-monday) = %s, want %s", since, want)
+	}
+}
+
+func TestAdminGrantLookbackSince_MondayRollsBackToFriday(t *testing.T) {
+	now := time.Date(2026, 4, 20, 9, 30, 0, 0, time.UTC) // Monday
+	since := adminGrantLookbackSince(now)
+	want := now.Add(-72 * time.Hour)
+	if !since.Equal(want) {
+		t.Errorf("adminGrantLookbackSince(monday) = %s, want %s", since, want)
 	}
 }
 
@@ -1529,7 +1547,7 @@ func TestFindRecentAdminGrants_EntryTooOld(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
 
-	oldMs := time.Now().Add(-48 * time.Hour).UnixMilli()
+	oldMs := time.Now().Add(-96 * time.Hour).UnixMilli()
 	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []map[string]interface{}{
 			auditLogEntry("bob", "example-org/my-repo", "admin", oldMs),

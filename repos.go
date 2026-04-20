@@ -747,17 +747,28 @@ type adminGrantResult struct {
 	accessURL string
 }
 
+// adminGrantLookbackSince returns the lower bound timestamp for admin-grant
+// queries. Default is the last 24 hours; on Mondays we roll back to Friday
+// by using a 72-hour lookback window.
+func adminGrantLookbackSince(now time.Time) time.Time {
+	lookback := 24 * time.Hour
+	if now.Weekday() == time.Monday {
+		lookback = 72 * time.Hour
+	}
+	return now.Add(-lookback)
+}
+
 // getOrgRepos returns all repositories for the given organization.
 // findRecentAdminGrants queries the organisation audit log for repo.add_member
-// events in the last 24 hours where the permission granted was admin, and
-// confirms each user still holds that access.
+// events in the recent lookback window where the permission granted was admin,
+// and confirms each user still holds that access.
 //
 // Audit log approach: a handful of paginated API calls regardless of repo count,
 // versus the old per-repo event-scan which made O(repos) parallel calls.
 //
 // Requires the token to have org owner permissions (needed to read the audit log).
 func findRecentAdminGrants(ctx context.Context, client *github.Client, org string) ([]adminGrantResult, error) {
-	since := time.Now().Add(-24 * time.Hour)
+	since := adminGrantLookbackSince(time.Now())
 	phrase := "action:repo.add_member"
 	order := "desc"
 
@@ -852,10 +863,10 @@ func findRecentAdminGrants(ctx context.Context, client *github.Client, org strin
 // reportRecentAdminGrants formats the results of findRecentAdminGrants for display.
 func reportRecentAdminGrants(org string, results []adminGrantResult) string {
 	if len(results) == 0 {
-		return fmt.Sprintf("No admin access grants detected in the last 24 hours across %s repositories.\n", org)
+		return fmt.Sprintf("No recent admin access grants detected across %s repositories.\n", org)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Users granted admin access in the last 24 hours (still active) in %s:\n\n", org)
+	fmt.Fprintf(&b, "Users granted recent admin access (still active) in %s:\n\n", org)
 	for i, r := range results {
 		fmt.Fprintf(&b, "%d. %s → %s\n   Granted by: %s\n   Granted: %s\n   Access settings: %s\n\n",
 			i+1,
@@ -871,7 +882,9 @@ func reportRecentAdminGrants(org string, results []adminGrantResult) string {
 
 // listRecentAdminGrants is the top-level command handler for --recent-admin-grants.
 func listRecentAdminGrants(ctx context.Context, client *github.Client, org string) error {
-	log.Printf("Scanning all repositories in %s for admin grants in the last 24 hours...", org)
+	now := time.Now()
+	since := adminGrantLookbackSince(now)
+	log.Printf("Scanning all repositories in %s for admin grants since %s...", org, since.UTC().Format("2006-01-02 15:04:05 UTC"))
 	results, err := findRecentAdminGrants(ctx, client, org)
 	if err != nil {
 		return err
