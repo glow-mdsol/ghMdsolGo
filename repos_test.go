@@ -1396,10 +1396,10 @@ func TestReportRecentAdminGrants_NoResults(t *testing.T) {
 	}
 }
 
-func TestAdminGrantLookbackSince_Default24Hours(t *testing.T) {
+func TestAdminGrantLookbackSince_Default48Hours(t *testing.T) {
 	now := time.Date(2026, 4, 21, 15, 0, 0, 0, time.UTC) // Wednesday
 	since := adminGrantLookbackSince(now)
-	want := now.Add(-24 * time.Hour)
+	want := now.Add(-48 * time.Hour)
 	if !since.Equal(want) {
 		t.Errorf("adminGrantLookbackSince(non-monday) = %s, want %s", since, want)
 	}
