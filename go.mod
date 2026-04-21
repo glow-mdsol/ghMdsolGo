@@ -1,4 +1,4 @@
-module github.com/glow-mdsol/ghMdsolGo
+module github.com/example-owner/ghOrgTool
 
 go 1.25.0
 

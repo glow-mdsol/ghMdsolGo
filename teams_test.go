@@ -15,14 +15,14 @@ import (
 func TestIsTeam_OrgNotFound(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	})
 	client, teardown := newTestClient(mux)
 	defer teardown()
 
 	// Returns false before calling GetTeamBySlug (which would log.Fatal on error).
-	if isTeam(ctx, client, "mdsol", "any-team") {
+	if isTeam(ctx, client, "example-org", "any-team") {
 		t.Error("isTeam expected false when org is not found")
 	}
 }
@@ -30,10 +30,10 @@ func TestIsTeam_OrgNotFound(t *testing.T) {
 func TestIsTeam_Found(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]string{"login": "mdsol"})
+	mux.HandleFunc("/orgs/example-org", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"login": "example-org"})
 	})
-	mux.HandleFunc("/orgs/mdsol/teams/team-alpha", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/teams/team-alpha", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
 			"id":   1,
 			"name": "Team Alpha",
@@ -43,7 +43,7 @@ func TestIsTeam_Found(t *testing.T) {
 	client, teardown := newTestClient(mux)
 	defer teardown()
 
-	if !isTeam(ctx, client, "mdsol", "team-alpha") {
+	if !isTeam(ctx, client, "example-org", "team-alpha") {
 		t.Error("isTeam expected true for existing team")
 	}
 }
@@ -70,7 +70,7 @@ func TestSummarizeTeam_Smoke(t *testing.T) {
 			{
 				"name":        "repo-one",
 				"permissions": map[string]bool{"push": true, "pull": true, "admin": false},
-				"owner":       map[string]string{"login": "mdsol"},
+				"owner":       map[string]string{"login": "example-org"},
 			},
 		})
 	})
@@ -79,7 +79,7 @@ func TestSummarizeTeam_Smoke(t *testing.T) {
 
 	teamName := "Team Alpha"
 	teamSlug := "team-alpha"
-	teamURL := "https://github.com/orgs/mdsol/teams/team-alpha"
+	teamURL := "https://github.com/orgs/example-org/teams/team-alpha"
 	team := newGithubTeam(orgID, teamID, teamName, teamSlug, teamURL)
 
 	summary := summarizeTeam(ctx, client, team)
@@ -98,7 +98,7 @@ func TestSummarizeTeam_Smoke(t *testing.T) {
 func TestGetTeamByName(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/teams/team-alpha", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/teams/team-alpha", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
 			"id":   1,
 			"name": "Team Alpha",
@@ -108,7 +108,7 @@ func TestGetTeamByName(t *testing.T) {
 	client, teardown := newTestClient(mux)
 	defer teardown()
 
-	team := getTeamByName(ctx, client, "mdsol", "Team Alpha")
+	team := getTeamByName(ctx, client, "example-org", "Team Alpha")
 	if team == nil {
 		t.Fatal("expected non-nil team")
 	}
@@ -160,22 +160,22 @@ func TestSummarizeTeam_AllPermissions(t *testing.T) {
 			{
 				"name":        "admin-repo",
 				"permissions": map[string]bool{"admin": true, "push": true, "pull": true},
-				"owner":       map[string]string{"login": "mdsol"},
+				"owner":       map[string]string{"login": "example-org"},
 			},
 			{
 				"name":        "maintain-repo",
 				"permissions": map[string]bool{"admin": false, "maintain": true, "push": false, "pull": true},
-				"owner":       map[string]string{"login": "mdsol"},
+				"owner":       map[string]string{"login": "example-org"},
 			},
 			{
 				"name":        "triage-repo",
 				"permissions": map[string]bool{"admin": false, "maintain": false, "push": false, "triage": true, "pull": true},
-				"owner":       map[string]string{"login": "mdsol"},
+				"owner":       map[string]string{"login": "example-org"},
 			},
 			{
 				"name":        "read-repo",
 				"permissions": map[string]bool{"admin": false, "maintain": false, "push": false, "triage": false, "pull": true},
-				"owner":       map[string]string{"login": "mdsol"},
+				"owner":       map[string]string{"login": "example-org"},
 			},
 		})
 	})

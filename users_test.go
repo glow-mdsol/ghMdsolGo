@@ -17,7 +17,7 @@ func TestSlugify(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"Team Medidata", "team-medidata"},
+		{"Default Team", "default-team"},
 		{"My Team Name", "my-team-name"},
 		{"lowercase", "lowercase"},
 		{"UPPERCASE", "uppercase"},
@@ -103,13 +103,13 @@ func TestIsUser_NotFound(t *testing.T) {
 func TestMeetsOrgPrequisites_IsMember(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/memberships/testuser", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/memberships/testuser", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
-			"state": "active",
-			"role":  "member",
-			"user": map[string]string{"login": "testuser"},
-			"organization": map[string]string{"login": "mdsol"},
-			"url": "https://api.github.com/orgs/mdsol/memberships/testuser",
+			"state":        "active",
+			"role":         "member",
+			"user":         map[string]string{"login": "testuser"},
+			"organization": map[string]string{"login": "example-org"},
+			"url":          "https://api.github.com/orgs/example-org/memberships/testuser",
 		})
 	})
 	client, teardown := newTestClient(mux)
@@ -126,7 +126,7 @@ func TestMeetsOrgPrequisites_IsMember(t *testing.T) {
 func TestMeetsOrgPrequisites_NotMember(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/memberships/outsider", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/memberships/outsider", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	})
 	client, teardown := newTestClient(mux)
@@ -143,7 +143,7 @@ func TestMeetsOrgPrequisites_NotMember(t *testing.T) {
 func TestMeetsOrgPrequisites_OtherError(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/memberships/baduser", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/memberships/baduser", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
 	})
 	client, teardown := newTestClient(mux)
@@ -164,7 +164,7 @@ func TestMeetsOrgPrequisites_OtherError(t *testing.T) {
 func TestMeets2FAPrerequisites_Has2FA(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/members", func(w http.ResponseWriter, r *http.Request) {
 		// Return an empty list – testuser is not in the 2FA-disabled list.
 		writeJSON(w, []interface{}{})
 	})
@@ -182,7 +182,7 @@ func TestMeets2FAPrerequisites_Has2FA(t *testing.T) {
 func TestMeets2FAPrerequisites_Missing2FA(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/members", func(w http.ResponseWriter, r *http.Request) {
 		// testuser appears in the 2FA-disabled list.
 		writeJSON(w, []map[string]string{{"login": "testuser"}})
 	})
@@ -200,7 +200,7 @@ func TestMeets2FAPrerequisites_Missing2FA(t *testing.T) {
 func TestMeets2FAPrerequisites_APIError(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/orgs/mdsol/members", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/orgs/example-org/members", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
 	})
 	client, teardown := newTestClient(mux)
