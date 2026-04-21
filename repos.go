@@ -738,7 +738,7 @@ func listRepositoryCollaborators(ctx context.Context, client *github.Client, own
 }
 
 // adminGrantResult holds information about a single admin-access grant event
-// that occurred within the last 24 hours and whose access is still in effect.
+// that occurred within the last 48 hours and whose access is still in effect.
 type adminGrantResult struct {
 	repo      string
 	login     string
@@ -748,10 +748,10 @@ type adminGrantResult struct {
 }
 
 // adminGrantLookbackSince returns the lower bound timestamp for admin-grant
-// queries. Default is the last 24 hours; on Mondays we roll back to Friday
+// queries. Default is the last 48 hours; on Mondays we roll back to Friday
 // by using a 72-hour lookback window.
 func adminGrantLookbackSince(now time.Time) time.Time {
-	lookback := 24 * time.Hour
+	lookback := 48 * time.Hour
 	if now.Weekday() == time.Monday {
 		lookback = 72 * time.Hour
 	}
