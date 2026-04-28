@@ -186,6 +186,8 @@ Usage of the tool is pretty simple
         Add users to a team (use with --team)
   -A, --add-repo-admin
         Add user as admin collaborator to repository (requires --repo)
+    -U, --admin-user-report
+      Report repositories where users have effective admin access via teams or direct collaborator links (optionally filtered to one user)
   -c, --find-common-teams
         Find teams that have access to ALL specified repositories
   -d, --describe-team
@@ -198,8 +200,14 @@ Usage of the tool is pretty simple
       List top 10 repositories by Actions cache usage and org billable constrained storage
   -G, --recent-admin-grants
       List users granted admin access to any org repo in the last 24h that still have that access
+    -M, --recent-admin-removals
+      List users recently removed from admin access on any org repo (same lookback window as grants)
   -R, --repo string
         Repository name for repo operations
+    --checkpoint-file string
+      Persist the last completed repo for deterministic admin-user-report restarts
+    --resume-after-repo string
+      Resume all-repos access reporting after the named repository
   -r, --reset
         Generate the Reset link
   -s, --team string
@@ -258,6 +266,58 @@ Accepts a username or email address. Use `--repo` to specify the target reposito
   Access report: someuser → example-org/somerepo
 
   Effective permission: write
+
+#### Admin User Report Across All Repositories
+Report every repository where users have effective `admin` access across the organization via teams or direct collaborator links.
+
+The scan lists org repositories once, checks them in parallel with a bounded worker pool, and flushes CSV rows in repository order so restart boundaries stay deterministic.
+
+```shell
+$ ghOrgTool --admin-user-report
+Admin access report (all users) across example-org repositories
+
+1. alice -> example-org/repo-a
+   Via admin teams:
+     - Platform Admins (https://github.com/orgs/example-org/teams/team-admin): admin
+
+2. bob -> example-org/repo-a
+   Via admin teams:
+     - Platform Admins (https://github.com/orgs/example-org/teams/team-admin): admin
+
+Processed 214 repositories with no API skips.
+```
+
+You can still filter to a specific user:
+
+```shell
+$ ghOrgTool --admin-user-report someuser
+```
+
+If a long scan is interrupted or some repositories fail transiently, resume after the last completed repository name:
+
+```shell
+$ ghOrgTool --admin-user-report --resume-after-repo repo-a
+```
+
+For repeatable restarts, use a checkpoint file. The command updates it after each repo is completely flushed to CSV, so you can rerun with the same checkpoint file and append the remaining rows.
+
+```shell
+$ ghOrgTool --admin-user-report --checkpoint-file admin-user-report.checkpoint > admin-users.csv
+$ ghOrgTool --admin-user-report --checkpoint-file admin-user-report.checkpoint >> admin-users.csv
+```
+
+#### Recent Admin Access Removals
+List users who had admin access removed recently, using the same lookback window as `--recent-admin-grants` (48 hours by default, 72 hours on Mondays).
+
+```shell
+$ ghOrgTool --recent-admin-removals
+Users recently removed from admin access in example-org:
+
+1. alice ← sample-orchestrator
+  Removed by: org-admin
+  Removed: 2026-04-15 10:00:00 UTC
+  Current access: none
+```
 
   Via teams:
     - Team Alpha (https://github.com/orgs/ORG/teams/team-alpha): read

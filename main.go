@@ -164,8 +164,12 @@ func main() {
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
 	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by Actions cache usage and org billable constrained storage")
 	var recentAdminGrants = flag.Bool("recent-admin-grants", false, "List users recently granted admin access to any org repo (Monday runs include grants since previous Friday) that still have that access")
+	var recentAdminRemovals = flag.Bool("recent-admin-removals", false, "List users recently removed from admin access on org repos (same lookback window as recent-admin-grants)")
 	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
 	var userRepoAccess = flag.Bool("user-repo-access", false, "Report a user's effective access to a repository via team membership (requires --repo)")
+	var adminUserReport = flag.Bool("admin-user-report", false, "Report repositories where users have effective admin access via teams or direct collaborator links (optionally filtered to one user)")
+	var resumeAfterRepo = flag.String("resume-after-repo", "", "Resume all-repos access reporting after the named repository")
+	var checkpointFile = flag.String("checkpoint-file", "", "Checkpoint file for deterministic admin-user-report restarts")
 	var initFlag = flag.Bool("init", false, "Initialize configuration file")
 	var rotateTokenFlag = flag.Bool("rotate-token", false, "Rotate/update GitHub token in configuration")
 	var help = flag.Bool("help", false, "Print help")
@@ -176,10 +180,12 @@ func main() {
 	getopt.Alias("L", "list-repo-collaborators")
 	getopt.Alias("S", "list-actions-storage")
 	getopt.Alias("G", "recent-admin-grants")
+	getopt.Alias("M", "recent-admin-removals")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("d", "describe-team")
 	getopt.Alias("u", "user-repo-access")
+	getopt.Alias("U", "admin-user-report")
 	getopt.Alias("i", "init")
 	getopt.Alias("t", "rotate-token")
 	getopt.Alias("h", "help")
@@ -214,11 +220,15 @@ func main() {
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
 		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by Actions cache usage and org billable constrained storage")
 		fmt.Println("  -G, --recent-admin-grants    List users recently granted admin access to any org repo (Monday includes since Friday, still active)")
+		fmt.Println("  -M, --recent-admin-removals  List users recently removed from admin access on any org repo (same lookback window)")
 		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
 		fmt.Println("  -u, --user-repo-access       Report a user's effective access to a repository via team membership (requires --repo)")
+		fmt.Println("  -U, --admin-user-report      Report repositories where users have effective admin access via teams or direct collaborator links")
 		fmt.Println("\nOPTIONS:")
 		fmt.Printf("  -s, --team <name>            Specify team name (default: '%s')\n", defaultTeam)
 		fmt.Println("  -R, --repo <name>            Specify repository name for repo operations")
+		fmt.Println("      --resume-after-repo      Resume all-repos access reporting after the named repository")
+		fmt.Println("      --checkpoint-file        Persist the last completed repo for deterministic admin-user-report restarts")
 		fmt.Println("  -i, --init                   Initialize configuration file interactively")
 		fmt.Println("  -t, --rotate-token           Rotate/update GitHub token in configuration")
 		fmt.Println("  -h, --help                   Show this help message")
@@ -245,10 +255,20 @@ func main() {
 		fmt.Println("  ghOrgTool --list-actions-storage")
 		fmt.Println("\n  # List users recently granted admin access to any org repo")
 		fmt.Println("  ghOrgTool --recent-admin-grants")
+		fmt.Println("\n  # List users recently removed from admin access on any org repo")
+		fmt.Println("  ghOrgTool --recent-admin-removals")
 		fmt.Println("\n  # Find teams with access to multiple repositories")
 		fmt.Println("  ghOrgTool --find-common-teams repo1 repo2 repo3")
 		fmt.Println("\n  # Show detailed summary of a team")
 		fmt.Println("  ghOrgTool --describe-team --team 'Engineering Team'")
+		fmt.Println("\n  # Report repos where any user has admin access via teams")
+		fmt.Println("  ghOrgTool --admin-user-report")
+		fmt.Println("\n  # Report repos where a specific user has admin access via teams")
+		fmt.Println("  ghOrgTool --admin-user-report someuser")
+		fmt.Println("\n  # Resume an interrupted admin access scan")
+		fmt.Println("  ghOrgTool --admin-user-report --resume-after-repo some-repo")
+		fmt.Println("\n  # Run with a checkpoint file for deterministic restarts")
+		fmt.Println("  ghOrgTool --admin-user-report --checkpoint-file admin-user-report.checkpoint > admin-users.csv")
 		os.Exit(0)
 	}
 	var userOrRepoList = flag.Args()
@@ -291,6 +311,13 @@ func main() {
 	if *recentAdminGrants {
 		if err := listRecentAdminGrants(ctx, client, ORG); err != nil {
 			log.Printf("Error listing recent admin grants: %s", err)
+		}
+		return
+	}
+
+	if *recentAdminRemovals {
+		if err := listRecentAdminRemovals(ctx, client, ORG); err != nil {
+			log.Printf("Error listing recent admin removals: %s", err)
 		}
 		return
 	}
@@ -355,6 +382,24 @@ func main() {
 		}
 		if err := reportUserRepoAccess(ctx, client, tc, ORG, login, *repoName); err != nil {
 			log.Printf("Error generating access report: %s", err)
+		}
+		return
+	}
+
+	if *adminUserReport {
+		if len(userOrRepoList) == 0 {
+			if err := reportOrgAdminRepoAccess(ctx, client, ORG, *resumeAfterRepo, *checkpointFile); err != nil {
+				log.Printf("Error generating org-wide admin access report: %s", err)
+			}
+			return
+		}
+		userSlug := userOrRepoList[0]
+		login, err := resolveLogin(ctx, tc, &userSlug)
+		if err != nil || login == "" {
+			log.Fatalf("Unable to resolve user '%s'", userSlug)
+		}
+		if err := reportUserAdminRepoAccess(ctx, client, tc, ORG, login, *resumeAfterRepo); err != nil {
+			log.Printf("Error generating admin access report: %s", err)
 		}
 		return
 	}

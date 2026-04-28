@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -229,13 +233,6 @@ func enableVulnerabilityAlerts(ctx context.Context, client *github.Client, owner
 
 // getRepositoryTeams - get the teams associated with a repository
 func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repositoryName string) ([]teamInfo, error) {
-
-	// Check the repo exists
-	_, _, err := client.Repositories.Get(ctx, owner, repositoryName)
-	if err != nil {
-		return nil, err
-	}
-
 	var listOptions = github.ListOptions{PerPage: 100}
 	repoTeams, _, err := client.Repositories.ListTeams(ctx, owner, repositoryName, &listOptions)
 	if err != nil {
@@ -747,6 +744,17 @@ type adminGrantResult struct {
 	accessURL string
 }
 
+// adminRemovalResult holds information about a single admin-access removal event
+// that occurred within the recent lookback window.
+type adminRemovalResult struct {
+	repo        string
+	login       string
+	actor       string
+	removedAt   time.Time
+	accessURL   string
+	currentPerm string
+}
+
 // adminGrantLookbackSince returns the lower bound timestamp for admin-grant
 // queries. Default is the last 48 hours; on Mondays we roll back to Friday
 // by using a 72-hour lookback window.
@@ -860,6 +868,110 @@ func findRecentAdminGrants(ctx context.Context, client *github.Client, org strin
 	return results, nil
 }
 
+// findRecentAdminRemovals queries the organisation audit log for repo.remove_member
+// events in the recent lookback window where the removed permission was admin,
+// and confirms the user no longer has admin access.
+func findRecentAdminRemovals(ctx context.Context, client *github.Client, org string) ([]adminRemovalResult, error) {
+	since := adminGrantLookbackSince(time.Now())
+	phrase := "action:repo.remove_member"
+	order := "desc"
+
+	opts := &github.GetAuditLogOptions{
+		Phrase:            &phrase,
+		Order:             &order,
+		ListCursorOptions: github.ListCursorOptions{PerPage: 100},
+	}
+
+	seen := make(map[string]bool) // "repo:login" – deduplicate multiple events for the same pair
+	var results []adminRemovalResult
+
+	for {
+		entries, resp, err := client.Organizations.GetAuditLog(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query audit log: %w", err)
+		}
+
+		done := false
+		for _, entry := range entries {
+			ts := entry.GetCreatedAt()
+			if ts.Time.Before(since) {
+				done = true
+				break
+			}
+
+			if entry.GetAction() != "repo.remove_member" {
+				continue
+			}
+
+			login := entry.GetUser()
+			if login == "" {
+				continue
+			}
+			actor := entry.GetActor()
+			if actor == "" {
+				actor = "unknown"
+			}
+
+			repoFull, _ := entry.AdditionalFields["repo"].(string)
+			if repoFull == "" {
+				continue
+			}
+			parts := strings.SplitN(repoFull, "/", 2)
+			if len(parts) != 2 || parts[0] != org {
+				continue
+			}
+			repoName := parts[1]
+
+			// Skip removals that were not admin if permission is present in the log.
+			if perm, ok := entry.AdditionalFields["permission"].(string); ok && perm != "admin" {
+				continue
+			}
+
+			key := repoName + ":" + login
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			currentPerm := "none"
+			current, resp, permErr := client.Repositories.GetPermissionLevel(ctx, org, repoName, login)
+			if permErr == nil {
+				currentPerm = current.GetPermission()
+				if currentPerm == "admin" {
+					continue
+				}
+			} else {
+				if resp == nil || resp.StatusCode != http.StatusNotFound {
+					log.Printf("Skipping removal verification for %s/%s (%s): %v", org, repoName, login, permErr)
+					continue
+				}
+			}
+
+			results = append(results, adminRemovalResult{
+				repo:        repoName,
+				login:       login,
+				actor:       actor,
+				removedAt:   ts.Time,
+				accessURL:   fmt.Sprintf("https://github.com/%s/%s/settings/access", org, repoName),
+				currentPerm: currentPerm,
+			})
+		}
+
+		if done || resp == nil || resp.After == "" {
+			break
+		}
+		opts.After = resp.After
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].repo != results[j].repo {
+			return results[i].repo < results[j].repo
+		}
+		return results[i].login < results[j].login
+	})
+	return results, nil
+}
+
 // reportRecentAdminGrants formats the results of findRecentAdminGrants for display.
 func reportRecentAdminGrants(org string, results []adminGrantResult) string {
 	if len(results) == 0 {
@@ -890,6 +1002,40 @@ func listRecentAdminGrants(ctx context.Context, client *github.Client, org strin
 		return err
 	}
 	fmt.Print(reportRecentAdminGrants(org, results))
+	return nil
+}
+
+// reportRecentAdminRemovals formats the results of findRecentAdminRemovals for display.
+func reportRecentAdminRemovals(org string, results []adminRemovalResult) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("No recent admin access removals detected across %s repositories.\n", org)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Users recently removed from admin access in %s:\n\n", org)
+	for i, r := range results {
+		fmt.Fprintf(&b, "%d. %s ← %s\n   Removed by: %s\n   Removed: %s\n   Current access: %s\n   Access settings: %s\n\n",
+			i+1,
+			r.login,
+			r.repo,
+			r.actor,
+			r.removedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+			r.currentPerm,
+			r.accessURL,
+		)
+	}
+	return b.String()
+}
+
+// listRecentAdminRemovals is the top-level command handler for --recent-admin-removals.
+func listRecentAdminRemovals(ctx context.Context, client *github.Client, org string) error {
+	now := time.Now()
+	since := adminGrantLookbackSince(now)
+	log.Printf("Scanning all repositories in %s for admin removals since %s...", org, since.UTC().Format("2006-01-02 15:04:05 UTC"))
+	results, err := findRecentAdminRemovals(ctx, client, org)
+	if err != nil {
+		return err
+	}
+	fmt.Print(reportRecentAdminRemovals(org, results))
 	return nil
 }
 
@@ -977,4 +1123,624 @@ func reportUserRepoAccess(ctx context.Context, client *github.Client, tc *http.C
 	}
 
 	return nil
+}
+
+// orgRepoAccessResult holds a user's effective access to one repository.
+type orgRepoAccessResult struct {
+	repoName      string
+	effectivePerm string
+	matchingTeams []userRepoTeamAccess
+	err           error
+}
+
+// orgAdminAccessReport contains repositories where the user has effective admin access.
+type orgAdminAccessReport struct {
+	userLogin       string
+	org             string
+	results         []orgRepoAccessResult
+	processedRepos  int
+	skippedRepos    int
+	resumeAfterRepo string
+}
+
+// orgAdminUserRepoResult holds one user's team-based admin access on a repository.
+type orgAdminUserRepoResult struct {
+	login           string
+	repoName        string
+	matchingTeams   []teamInfo
+	hasDirectAccess bool
+}
+
+// orgWideAdminAccessReport contains all user/repository pairs where team-based
+// effective access is admin.
+type orgWideAdminAccessReport struct {
+	org             string
+	results         []orgAdminUserRepoResult
+	processedRepos  int
+	skippedRepos    int
+	resumeAfterRepo string
+}
+
+// getOrgRepos returns all repositories for the given organization.
+func getOrgRepos(ctx context.Context, client *github.Client, org string) ([]string, error) {
+	opts := &github.RepositoryListByOrgOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	var repoNames []string
+
+	for {
+		repos, resp, err := client.Repositories.ListByOrg(ctx, org, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, repo := range repos {
+			if repo.Name != nil {
+				repoNames = append(repoNames, *repo.Name)
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	sort.Strings(repoNames)
+	return repoNames, nil
+}
+
+func buildUserRepoMatches(userTeams []teamInfo, repoTeams []teamInfo) []userRepoTeamAccess {
+	repoTeamPermissions := make(map[string]string, len(repoTeams))
+	for _, team := range repoTeams {
+		repoTeamPermissions[team.slug] = normalizePermission(team.access)
+	}
+
+	var matches []userRepoTeamAccess
+	for _, userTeam := range userTeams {
+		if perm, ok := repoTeamPermissions[userTeam.slug]; ok {
+			matches = append(matches, userRepoTeamAccess{team: userTeam, permission: perm})
+		}
+	}
+
+	return matches
+}
+
+func effectivePermission(matches []userRepoTeamAccess) string {
+	effectivePerm := ""
+	for _, match := range matches {
+		if permissionLevel(match.permission) > permissionLevel(effectivePerm) {
+			effectivePerm = match.permission
+		}
+	}
+	return effectivePerm
+}
+
+func adminRepoWorkerCount(totalRepos int) int {
+	if totalRepos <= 0 {
+		return 1
+	}
+	workers := runtime.NumCPU()
+	if workers < 4 {
+		workers = 4
+	}
+	if workers > 12 {
+		workers = 12
+	}
+	if workers > totalRepos {
+		workers = totalRepos
+	}
+	return workers
+}
+
+func getTeamMemberLoginsBySlug(ctx context.Context, client *github.Client, org, teamSlug string) ([]string, error) {
+	opts := &github.TeamListTeamMembersOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	var logins []string
+
+	for {
+		members, resp, err := client.Teams.ListTeamMembersBySlug(ctx, org, teamSlug, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, member := range members {
+			if member.Login != nil {
+				logins = append(logins, *member.Login)
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return logins, nil
+}
+
+func getDirectAdminCollaborators(ctx context.Context, client *github.Client, org, repoName string) ([]string, error) {
+	opts := &github.ListCollaboratorsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+		Affiliation: "direct",
+	}
+	var logins []string
+
+	for {
+		collaborators, resp, err := client.Repositories.ListCollaborators(ctx, org, repoName, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, collab := range collaborators {
+			if collab.Login == nil || collab.Permissions == nil {
+				continue
+			}
+			if collab.Permissions.GetAdmin() {
+				logins = append(logins, *collab.Login)
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return logins, nil
+}
+
+// findUserAdminRepoAccess analyzes all org repositories and returns those where
+// the user's effective team-based permission is admin. Processing is bounded and
+// parallel to keep runtime reasonable without issuing an unbounded burst of API calls.
+func findUserAdminRepoAccess(ctx context.Context, client *github.Client, tc *http.Client, org, userLogin, resumeAfterRepo string) (*orgAdminAccessReport, error) {
+	userTeams, err := getUserTeams(ctx, tc, org, userLogin)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get teams for user %s: %w", userLogin, err)
+	}
+
+	repoNames, err := getOrgRepos(ctx, client, org)
+	if err != nil {
+		return nil, fmt.Errorf("unable to list repositories for %s: %w", org, err)
+	}
+
+	startIndex := 0
+	if resumeAfterRepo != "" {
+		startIndex = len(repoNames)
+		for i, repoName := range repoNames {
+			if repoName > resumeAfterRepo {
+				startIndex = i
+				break
+			}
+		}
+	}
+	if startIndex >= len(repoNames) {
+		return &orgAdminAccessReport{userLogin: userLogin, org: org, resumeAfterRepo: resumeAfterRepo}, nil
+	}
+
+	repoNames = repoNames[startIndex:]
+	jobs := make(chan string)
+	results := make(chan orgRepoAccessResult, len(repoNames))
+
+	workerCount := adminRepoWorkerCount(len(repoNames))
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for repoName := range jobs {
+				repoTeams, repoErr := getRepositoryTeams(ctx, client, org, repoName)
+				if repoErr != nil {
+					results <- orgRepoAccessResult{repoName: repoName, err: repoErr}
+					continue
+				}
+
+				matches := buildUserRepoMatches(userTeams, repoTeams)
+				results <- orgRepoAccessResult{
+					repoName:      repoName,
+					matchingTeams: matches,
+					effectivePerm: effectivePermission(matches),
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, repoName := range repoNames {
+			jobs <- repoName
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	report := &orgAdminAccessReport{userLogin: userLogin, org: org, resumeAfterRepo: resumeAfterRepo}
+	for result := range results {
+		report.processedRepos++
+		if result.repoName > report.resumeAfterRepo {
+			report.resumeAfterRepo = result.repoName
+		}
+		if result.err != nil {
+			report.skippedRepos++
+			log.Printf("Skipping repository %s due to error: %v", result.repoName, result.err)
+			continue
+		}
+		if result.effectivePerm == "admin" {
+			report.results = append(report.results, result)
+		}
+	}
+
+	sort.Slice(report.results, func(i, j int) bool {
+		return report.results[i].repoName < report.results[j].repoName
+	})
+
+	return report, nil
+}
+
+func formatUserAdminRepoAccessReport(report *orgAdminAccessReport) string {
+	if report == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	_ = w.Write([]string{"repo", "user", "access_type", "team_name", "access_url"})
+
+	for _, result := range report.results {
+		for _, match := range result.matchingTeams {
+			_ = w.Write([]string{
+				report.org + "/" + result.repoName,
+				report.userLogin,
+				"team",
+				match.team.name,
+				match.team.url,
+			})
+		}
+	}
+	w.Flush()
+
+	return b.String()
+}
+
+func reportUserAdminRepoAccess(ctx context.Context, client *github.Client, tc *http.Client, org, userLogin, resumeAfterRepo string) error {
+	report, err := findUserAdminRepoAccess(ctx, client, tc, org, userLogin, resumeAfterRepo)
+	if err != nil {
+		return err
+	}
+	fmt.Print(formatUserAdminRepoAccessReport(report))
+	return nil
+}
+
+type repoWideAdminResult struct {
+	repoName string
+	results  []orgAdminUserRepoResult
+	err      error
+}
+
+func sortAdminTeams(teams []teamInfo) {
+	sort.Slice(teams, func(i, j int) bool {
+		if teams[i].slug != teams[j].slug {
+			return teams[i].slug < teams[j].slug
+		}
+		return teams[i].name < teams[j].name
+	})
+}
+
+func sortOrgAdminRepoResults(results []orgAdminUserRepoResult) {
+	for i := range results {
+		sortAdminTeams(results[i].matchingTeams)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].login < results[j].login
+	})
+}
+
+func collectOrgAdminRepoAccess(ctx context.Context, client *github.Client, org, repoName string) repoWideAdminResult {
+	repoTeams, repoErr := getRepositoryTeams(ctx, client, org, repoName)
+	if repoErr != nil {
+		return repoWideAdminResult{repoName: repoName, err: repoErr}
+	}
+
+	var adminTeams []teamInfo
+	for _, team := range repoTeams {
+		if normalizePermission(team.access) == "admin" {
+			adminTeams = append(adminTeams, team)
+		}
+	}
+	sortAdminTeams(adminTeams)
+
+	repoUsers := make(map[string]*orgAdminUserRepoResult)
+	for _, team := range adminTeams {
+		logins, teamErr := getTeamMemberLoginsBySlug(ctx, client, org, team.slug)
+		if teamErr != nil {
+			return repoWideAdminResult{repoName: repoName, err: teamErr}
+		}
+		sort.Strings(logins)
+		for _, login := range logins {
+			result, ok := repoUsers[login]
+			if !ok {
+				result = &orgAdminUserRepoResult{login: login, repoName: repoName}
+				repoUsers[login] = result
+			}
+			result.matchingTeams = append(result.matchingTeams, team)
+		}
+	}
+
+	directAdminLogins, directErr := getDirectAdminCollaborators(ctx, client, org, repoName)
+	if directErr != nil {
+		return repoWideAdminResult{repoName: repoName, err: directErr}
+	}
+	sort.Strings(directAdminLogins)
+	for _, login := range directAdminLogins {
+		result, ok := repoUsers[login]
+		if !ok {
+			result = &orgAdminUserRepoResult{login: login, repoName: repoName}
+			repoUsers[login] = result
+		}
+		result.hasDirectAccess = true
+	}
+
+	var repoResults []orgAdminUserRepoResult
+	for _, userResult := range repoUsers {
+		repoResults = append(repoResults, *userResult)
+	}
+	sortOrgAdminRepoResults(repoResults)
+
+	return repoWideAdminResult{repoName: repoName, results: repoResults}
+}
+
+func resolveResumeAfterRepo(resumeAfterRepo, checkpointFile string) (string, error) {
+	if resumeAfterRepo != "" || checkpointFile == "" {
+		return resumeAfterRepo, nil
+	}
+	data, err := os.ReadFile(checkpointFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func writeResumeCheckpoint(checkpointFile, repoName string) error {
+	if checkpointFile == "" {
+		return nil
+	}
+	return os.WriteFile(checkpointFile, []byte(repoName+"\n"), 0o600)
+}
+
+func writeAdminCSVHeader(w io.Writer) error {
+	csvWriter := csv.NewWriter(w)
+	if err := csvWriter.Write([]string{"repo", "user", "access_type", "team_name", "access_url"}); err != nil {
+		return err
+	}
+	csvWriter.Flush()
+	return csvWriter.Error()
+}
+
+func writeOrgAdminRepoCSVRows(w io.Writer, org string, repoResult repoWideAdminResult) error {
+	csvWriter := csv.NewWriter(w)
+	for _, result := range repoResult.results {
+		for _, team := range result.matchingTeams {
+			if err := csvWriter.Write([]string{
+				org + "/" + result.repoName,
+				result.login,
+				"team",
+				team.name,
+				team.url,
+			}); err != nil {
+				return err
+			}
+		}
+		if result.hasDirectAccess {
+			if err := csvWriter.Write([]string{
+				org + "/" + result.repoName,
+				result.login,
+				"collaborator",
+				"",
+				fmt.Sprintf("https://github.com/%s/%s/settings/access", org, result.repoName),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	csvWriter.Flush()
+	return csvWriter.Error()
+}
+
+// findOrgAdminRepoAccess analyzes all org repositories and returns all users
+// who currently have team-based admin access on each repository.
+func findOrgAdminRepoAccess(ctx context.Context, client *github.Client, org, resumeAfterRepo string) (*orgWideAdminAccessReport, error) {
+	repoNames, err := getOrgRepos(ctx, client, org)
+	if err != nil {
+		return nil, fmt.Errorf("unable to list repositories for %s: %w", org, err)
+	}
+
+	startIndex := 0
+	if resumeAfterRepo != "" {
+		startIndex = len(repoNames)
+		for i, repoName := range repoNames {
+			if repoName > resumeAfterRepo {
+				startIndex = i
+				break
+			}
+		}
+	}
+	if startIndex >= len(repoNames) {
+		return &orgWideAdminAccessReport{org: org, resumeAfterRepo: resumeAfterRepo}, nil
+	}
+
+	repoNames = repoNames[startIndex:]
+	jobs := make(chan string)
+	results := make(chan repoWideAdminResult, len(repoNames))
+
+	workerCount := adminRepoWorkerCount(len(repoNames))
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for repoName := range jobs {
+				results <- collectOrgAdminRepoAccess(ctx, client, org, repoName)
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, repoName := range repoNames {
+			jobs <- repoName
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	report := &orgWideAdminAccessReport{org: org, resumeAfterRepo: resumeAfterRepo}
+	for result := range results {
+		report.processedRepos++
+		if result.repoName > report.resumeAfterRepo {
+			report.resumeAfterRepo = result.repoName
+		}
+		if result.err != nil {
+			report.skippedRepos++
+			log.Printf("Skipping repository %s due to error: %v", result.repoName, result.err)
+			continue
+		}
+		report.results = append(report.results, result.results...)
+	}
+
+	sort.Slice(report.results, func(i, j int) bool {
+		if report.results[i].repoName != report.results[j].repoName {
+			return report.results[i].repoName < report.results[j].repoName
+		}
+		return report.results[i].login < report.results[j].login
+	})
+
+	return report, nil
+}
+
+func formatOrgAdminRepoAccessReport(report *orgWideAdminAccessReport) string {
+	if report == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	_ = w.Write([]string{"repo", "user", "access_type", "team_name", "access_url"})
+
+	for _, result := range report.results {
+		for _, team := range result.matchingTeams {
+			_ = w.Write([]string{
+				report.org + "/" + result.repoName,
+				result.login,
+				"team",
+				team.name,
+				team.url,
+			})
+		}
+		if result.hasDirectAccess {
+			_ = w.Write([]string{
+				report.org + "/" + result.repoName,
+				result.login,
+				"collaborator",
+				"",
+				fmt.Sprintf("https://github.com/%s/%s/settings/access", report.org, result.repoName),
+			})
+		}
+	}
+	w.Flush()
+
+	return b.String()
+}
+
+func streamOrgAdminRepoAccessReport(ctx context.Context, client *github.Client, w io.Writer, org, resumeAfterRepo, checkpointFile string) error {
+	resolvedResumeAfterRepo, err := resolveResumeAfterRepo(resumeAfterRepo, checkpointFile)
+	if err != nil {
+		return fmt.Errorf("unable to resolve resume checkpoint: %w", err)
+	}
+
+	repoNames, err := getOrgRepos(ctx, client, org)
+	if err != nil {
+		return fmt.Errorf("unable to list repositories for %s: %w", org, err)
+	}
+
+	startIndex := 0
+	if resolvedResumeAfterRepo != "" {
+		startIndex = len(repoNames)
+		for i, repoName := range repoNames {
+			if repoName > resolvedResumeAfterRepo {
+				startIndex = i
+				break
+			}
+		}
+	}
+	remainingRepos := repoNames[startIndex:]
+
+	if resolvedResumeAfterRepo == "" {
+		if err := writeAdminCSVHeader(w); err != nil {
+			return err
+		}
+	}
+	if len(remainingRepos) == 0 {
+		return nil
+	}
+
+	jobs := make(chan string)
+	results := make(chan repoWideAdminResult, len(remainingRepos))
+	workerCount := adminRepoWorkerCount(len(remainingRepos))
+	var wg sync.WaitGroup
+
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for repoName := range jobs {
+				results <- collectOrgAdminRepoAccess(ctx, client, org, repoName)
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, repoName := range remainingRepos {
+			jobs <- repoName
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	indexByRepo := make(map[string]int, len(remainingRepos))
+	for i, repoName := range remainingRepos {
+		indexByRepo[repoName] = i
+	}
+	pending := make(map[int]repoWideAdminResult, len(remainingRepos))
+	nextToFlush := 0
+
+	for result := range results {
+		pending[indexByRepo[result.repoName]] = result
+		for {
+			nextResult, ok := pending[nextToFlush]
+			if !ok {
+				break
+			}
+			delete(pending, nextToFlush)
+			if nextResult.err != nil {
+				return fmt.Errorf("processing repository %s: %w", nextResult.repoName, nextResult.err)
+			}
+			if err := writeOrgAdminRepoCSVRows(w, org, nextResult); err != nil {
+				return err
+			}
+			if err := writeResumeCheckpoint(checkpointFile, nextResult.repoName); err != nil {
+				return fmt.Errorf("unable to update checkpoint file: %w", err)
+			}
+			nextToFlush++
+		}
+	}
+
+	return nil
+}
+
+func reportOrgAdminRepoAccess(ctx context.Context, client *github.Client, org, resumeAfterRepo, checkpointFile string) error {
+	return streamOrgAdminRepoAccessReport(ctx, client, os.Stdout, org, resumeAfterRepo, checkpointFile)
 }
