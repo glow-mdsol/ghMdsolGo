@@ -186,6 +186,10 @@ Usage of the tool is pretty simple
         Add users to a team (use with --team)
   -A, --add-repo-admin
         Add user as admin collaborator to repository (requires --repo)
+    -B, --enable-dependabot
+      Enable Dependabot alerts and security updates for one or more repositories
+    -P, --dependabot-grouped-prs
+      Optional with --enable-dependabot: verify grouped PR config and print PR-ready guidance (no direct commits)
     -U, --admin-user-report
       Report repositories where users have effective admin access via teams or direct collaborator links (optionally filtered to one user)
   -c, --find-common-teams
@@ -217,6 +221,21 @@ Usage of the tool is pretty simple
   
   Note: Without any flags, the tool lists teams for the specified user or repository.
   ```
+
+Enable Dependabot for one repository:
+```shell
+ghOrgTool --enable-dependabot --repo my-repo
+```
+
+Enable Dependabot for multiple repositories:
+```shell
+ghOrgTool --enable-dependabot repo1 repo2 repo3
+```
+
+Optionally check grouped PR configuration (off by default):
+```shell
+ghOrgTool --enable-dependabot --dependabot-grouped-prs --repo my-repo
+```
 
 ### Tools
 

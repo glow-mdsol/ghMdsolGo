@@ -161,6 +161,8 @@ func main() {
 	var findCommonTeams = flag.Bool("find-common-teams", false, "Find teams that have access to ALL specified repositories")
 	var addToTM = flag.Bool("add", false, "Add User to Team")
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
+	var enableDependabotFlag = flag.Bool("enable-dependabot", false, "Enable Dependabot alerts and security updates on one or more repositories")
+	var dependabotGroupedPRsFlag = flag.Bool("dependabot-grouped-prs", false, "Optional with --enable-dependabot: check grouped PR config and print PR-ready guidance (no direct commits)")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
 	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by Actions cache usage and org billable constrained storage")
 	var recentAdminGrants = flag.Bool("recent-admin-grants", false, "List users recently granted admin access to any org repo (Monday runs include grants since previous Friday) that still have that access")
@@ -177,6 +179,8 @@ func main() {
 	getopt.Alias("R", "repo")
 	getopt.Alias("a", "add")
 	getopt.Alias("A", "add-repo-admin")
+	getopt.Alias("B", "enable-dependabot")
+	getopt.Alias("P", "dependabot-grouped-prs")
 	getopt.Alias("L", "list-repo-collaborators")
 	getopt.Alias("S", "list-actions-storage")
 	getopt.Alias("G", "recent-admin-grants")
@@ -190,6 +194,10 @@ func main() {
 	getopt.Alias("t", "rotate-token")
 	getopt.Alias("h", "help")
 	getopt.Parse()
+
+	if *dependabotGroupedPRsFlag && !*enableDependabotFlag {
+		log.Fatal("--dependabot-grouped-prs must be used with --enable-dependabot")
+	}
 
 	if *initFlag {
 		if err := initConfig(); err != nil {
@@ -216,6 +224,8 @@ func main() {
 		fmt.Println("  -d, --describe-team          Show detailed summary of a team (use with --team)")
 		fmt.Println("\nREPOSITORY OPERATIONS:")
 		fmt.Println("  -A, --add-repo-admin         Add users as admin collaborators to a repository (requires --repo)")
+		fmt.Println("  -B, --enable-dependabot      Enable Dependabot alerts and security updates")
+		fmt.Println("  -P, --dependabot-grouped-prs Optional with --enable-dependabot: verify grouped PR config and print guidance")
 		fmt.Println("  -L, --list-repo-collaborators")
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
 		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by Actions cache usage and org billable constrained storage")
@@ -249,6 +259,12 @@ func main() {
 		fmt.Println("  ghOrgTool --reset username")
 		fmt.Println("\n  # Add user as admin to a repository")
 		fmt.Println("  ghOrgTool --add-repo-admin --repo my-repo user1 user2")
+		fmt.Println("\n  # Enable Dependabot on one repository")
+		fmt.Println("  ghOrgTool --enable-dependabot --repo my-repo")
+		fmt.Println("\n  # Enable Dependabot and check grouped PR config (no direct commits)")
+		fmt.Println("  ghOrgTool --enable-dependabot --dependabot-grouped-prs --repo my-repo")
+		fmt.Println("\n  # Enable Dependabot on multiple repositories")
+		fmt.Println("  ghOrgTool --enable-dependabot repo1 repo2 repo3")
 		fmt.Println("\n  # List all collaborators on a repository")
 		fmt.Println("  ghOrgTool --list-repo-collaborators --repo my-repo")
 		fmt.Println("\n  # List top repositories by Actions cache usage and show billable constrained storage")
@@ -360,6 +376,75 @@ func main() {
 			if err != nil {
 				log.Printf("Error adding user %s as admin to repository %s: %s", login, *repoName, err)
 			}
+		}
+		return
+	}
+
+	if *enableDependabotFlag {
+		var repoTargets []string
+		if *repoName != "" {
+			repoTargets = append(repoTargets, *repoName)
+		}
+		repoTargets = append(repoTargets, userOrRepoList...)
+
+		if len(repoTargets) == 0 {
+			log.Fatal("At least one repository is required when using --enable-dependabot")
+		}
+
+		seen := make(map[string]struct{})
+		validTargets := 0
+
+		for _, repo := range repoTargets {
+			repo = strings.TrimSpace(repo)
+			if repo == "" {
+				continue
+			}
+			if _, exists := seen[repo]; exists {
+				continue
+			}
+			seen[repo] = struct{}{}
+
+			if !isRepository(ctx, client, ORG, repo) {
+				log.Printf("Warning: repository '%s' not found in organization '%s', skipping", repo, ORG)
+				continue
+			}
+
+			result, err := enableDependabot(ctx, client, ORG, repo)
+			if err != nil {
+				log.Printf("Error enabling Dependabot for repository %s: %s", repo, err)
+				continue
+			}
+
+			validTargets++
+			switch {
+			case result.vulnerabilityAlertsEnabled && result.automatedFixesEnabled:
+				log.Printf("Enabled Dependabot alerts and security updates for repository %s", repo)
+			case result.vulnerabilityAlertsEnabled:
+				log.Printf("Enabled Dependabot alerts for repository %s (security updates were already enabled)", repo)
+			case result.automatedFixesEnabled:
+				log.Printf("Enabled Dependabot security updates for repository %s (alerts were already enabled)", repo)
+			default:
+				log.Printf("Dependabot is already fully enabled for repository %s", repo)
+			}
+
+			if *dependabotGroupedPRsFlag {
+				groupedConfigured, groupedErr := hasDependabotGroupedPRs(ctx, client, ORG, repo)
+				if groupedErr != nil {
+					log.Printf("Unable to check grouped Dependabot PR config for repository %s: %s", repo, groupedErr)
+					continue
+				}
+				if groupedConfigured {
+					log.Printf("Grouped Dependabot PRs are already configured for repository %s", repo)
+				} else {
+					log.Printf("Grouped Dependabot PRs requested for repository %s, but %s is missing or ungrouped", repo, dependabotConfigPath)
+					log.Printf("Direct commits are disabled. Open a pull request in %s/%s with this content in %s:", ORG, repo, dependabotConfigPath)
+					fmt.Println(defaultDependabotGroupedPRTemplate())
+				}
+			}
+		}
+
+		if validTargets == 0 {
+			log.Fatal("No valid repositories found for --enable-dependabot")
 		}
 		return
 	}

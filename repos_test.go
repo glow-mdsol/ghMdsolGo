@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -770,6 +771,230 @@ func TestEnableVulnerabilityAlerts_GetError(t *testing.T) {
 	_, err := enableVulnerabilityAlerts(ctx, client, "example-org", "missing-repo")
 	if err == nil {
 		t.Error("expected error when repo not found, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// enableAutomatedSecurityFixes / enableDependabot
+// ---------------------------------------------------------------------------
+
+func TestEnableAutomatedSecurityFixes_AlreadyEnabled(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": true, "paused": false})
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableAutomatedSecurityFixes(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if enabled {
+		t.Error("expected false when automated security fixes were already enabled")
+	}
+}
+
+func TestEnableAutomatedSecurityFixes_EnablesNew(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	putCalled := false
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": false, "paused": false})
+			return
+		}
+		if r.Method == http.MethodPut {
+			putCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableAutomatedSecurityFixes(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !enabled {
+		t.Error("expected true when automated security fixes were newly enabled")
+	}
+	if !putCalled {
+		t.Error("expected PUT request to enable automated security fixes")
+	}
+}
+
+func TestEnableDependabot_EnablesBoth(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	vulnPutCalled := false
+	automationPutCalled := false
+
+	mux.HandleFunc("/repos/example-org/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodPut {
+			vulnPutCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": false, "paused": false})
+			return
+		}
+		if r.Method == http.MethodPut {
+			automationPutCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	result, err := enableDependabot(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.vulnerabilityAlertsEnabled {
+		t.Error("expected vulnerability alerts to be newly enabled")
+	}
+	if !result.automatedFixesEnabled {
+		t.Error("expected automated security fixes to be newly enabled")
+	}
+	if !vulnPutCalled {
+		t.Error("expected vulnerability alerts PUT request")
+	}
+	if !automationPutCalled {
+		t.Error("expected automated security fixes PUT request")
+	}
+}
+
+func TestEnableDependabot_AutomatedFixesCheckError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/example-org/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Internal Server Error"}`, http.StatusInternalServerError)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := enableDependabot(ctx, client, "example-org", "my-repo")
+	if err == nil {
+		t.Error("expected error when automated security fixes check fails")
+	}
+}
+
+func TestHasDependabotGroupedPRs_FileMissing(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if configured {
+		t.Error("expected grouped PR config to be false when file is missing")
+	}
+}
+
+func TestHasDependabotGroupedPRs_TrueWhenConfigContainsGroups(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	existing := "version: 2\nupdates:\n  - package-ecosystem: gomod\n    directory: /\n    schedule:\n      interval: weekly\n    groups:\n      all-dependencies:\n        patterns:\n          - \"*\"\n"
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"type":     "file",
+			"sha":      "abc123",
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString([]byte(existing)),
+		})
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !configured {
+		t.Error("expected grouped PR config to be detected")
+	}
+}
+
+func TestHasDependabotGroupedPRs_FalseWithoutGroups(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	existing := "version: 2\nupdates:\n  - package-ecosystem: gomod\n    directory: /\n    schedule:\n      interval: weekly\n"
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"type":     "file",
+			"sha":      "abc123",
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString([]byte(existing)),
+		})
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if configured {
+		t.Error("expected grouped PR config to be false when groups are not present")
+	}
+}
+
+func TestDefaultDependabotGroupedPRTemplate(t *testing.T) {
+	template := defaultDependabotGroupedPRTemplate()
+	if !strings.Contains(template, "version: 2") {
+		t.Fatal("template should include version")
+	}
+	if !strings.Contains(template, "package-ecosystem: gomod") {
+		t.Fatal("template should include gomod ecosystem")
+	}
+	if !strings.Contains(template, "package-ecosystem: github-actions") {
+		t.Fatal("template should include github-actions ecosystem")
+	}
+	if !strings.Contains(template, "groups:") || !strings.Contains(template, "patterns:") {
+		t.Fatal("template should include grouped PR rules")
 	}
 }
 

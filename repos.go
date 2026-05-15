@@ -231,6 +231,77 @@ func enableVulnerabilityAlerts(ctx context.Context, client *github.Client, owner
 	return true, nil
 }
 
+// enableAutomatedSecurityFixes - enable Dependabot security updates for a repository
+func enableAutomatedSecurityFixes(ctx context.Context, client *github.Client, owner, repository string) (bool, error) {
+	fixes, _, err := client.Repositories.GetAutomatedSecurityFixes(ctx, owner, repository)
+	if err != nil {
+		log.Println("Unable to check automated security fixes for repository", err)
+		return false, err
+	}
+	if fixes != nil && fixes.Enabled != nil && *fixes.Enabled {
+		log.Println("Automated security fixes for repository", repository, "already enabled")
+		return false, nil
+	}
+	_, err = client.Repositories.EnableAutomatedSecurityFixes(ctx, owner, repository)
+	if err != nil {
+		log.Println("Unable to enable automated security fixes for repository", err)
+		return false, err
+	}
+	return true, nil
+}
+
+// dependabotEnableResult records which Dependabot-related features were newly enabled.
+type dependabotEnableResult struct {
+	vulnerabilityAlertsEnabled bool
+	automatedFixesEnabled      bool
+}
+
+// enableDependabot enables both vulnerability alerts and automated security fixes.
+func enableDependabot(ctx context.Context, client *github.Client, owner, repository string) (*dependabotEnableResult, error) {
+	alertsEnabled, err := enableVulnerabilityAlerts(ctx, client, owner, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	automatedFixesEnabled, err := enableAutomatedSecurityFixes(ctx, client, owner, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dependabotEnableResult{
+		vulnerabilityAlertsEnabled: alertsEnabled,
+		automatedFixesEnabled:      automatedFixesEnabled,
+	}, nil
+}
+
+const dependabotConfigPath = ".github/dependabot.yml"
+
+// hasDependabotGroupedPRs checks whether repository config appears to include grouped update rules.
+func hasDependabotGroupedPRs(ctx context.Context, client *github.Client, owner, repository string) (bool, error) {
+	file, _, _, err := client.Repositories.GetContents(ctx, owner, repository, dependabotConfigPath, nil)
+	if err != nil {
+		if ghErr, ok := err.(*github.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if file == nil {
+		return false, fmt.Errorf("%s exists but is not a file", dependabotConfigPath)
+	}
+
+	content, err := file.GetContent()
+	if err != nil {
+		return false, err
+	}
+
+	return strings.Contains(content, "groups:") && strings.Contains(content, "patterns:") && strings.Contains(content, "*"), nil
+}
+
+func defaultDependabotGroupedPRTemplate() string {
+	return "version: 2\nupdates:\n  - package-ecosystem: gomod\n    directory: /\n    schedule:\n      interval: weekly\n    groups:\n      all-dependencies:\n        patterns:\n          - \"*\"\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n    groups:\n      all-dependencies:\n        patterns:\n          - \"*\"\n"
+}
+
 // getRepositoryTeams - get the teams associated with a repository
 func getRepositoryTeams(ctx context.Context, client *github.Client, owner, repositoryName string) ([]teamInfo, error) {
 	var listOptions = github.ListOptions{PerPage: 100}
