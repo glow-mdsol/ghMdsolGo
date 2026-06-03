@@ -161,11 +161,17 @@ func main() {
 	var findCommonTeams = flag.Bool("find-common-teams", false, "Find teams that have access to ALL specified repositories")
 	var addToTM = flag.Bool("add", false, "Add User to Team")
 	var addRepoAdmin = flag.Bool("add-repo-admin", false, "Add user as admin collaborator to repository")
+	var enableDependabotFlag = flag.Bool("enable-dependabot", false, "Enable Dependabot alerts and security updates on one or more repositories")
+	var dependabotGroupedPRsFlag = flag.Bool("dependabot-grouped-prs", false, "Optional with --enable-dependabot: check grouped PR config and print PR-ready guidance (no direct commits)")
 	var listRepoCollaborators = flag.Bool("list-repo-collaborators", false, "List collaborators on repository with permissions and added dates")
 	var listActionsStorage = flag.Bool("list-actions-storage", false, "List top 10 repositories by Actions cache usage and org billable constrained storage")
 	var recentAdminGrants = flag.Bool("recent-admin-grants", false, "List users recently granted admin access to any org repo (Monday runs include grants since previous Friday) that still have that access")
+	var recentAdminRemovals = flag.Bool("recent-admin-removals", false, "List users recently removed from admin access on org repos (same lookback window as recent-admin-grants)")
 	var describeTeam = flag.Bool("describe-team", false, "Show detailed summary of a team")
 	var userRepoAccess = flag.Bool("user-repo-access", false, "Report a user's effective access to a repository via team membership (requires --repo)")
+	var adminUserReport = flag.Bool("admin-user-report", false, "Report repositories where users have effective admin access via teams or direct collaborator links (optionally filtered to one user)")
+	var resumeAfterRepo = flag.String("resume-after-repo", "", "Resume all-repos access reporting after the named repository")
+	var checkpointFile = flag.String("checkpoint-file", "", "Checkpoint file for deterministic admin-user-report restarts")
 	var initFlag = flag.Bool("init", false, "Initialize configuration file")
 	var rotateTokenFlag = flag.Bool("rotate-token", false, "Rotate/update GitHub token in configuration")
 	var help = flag.Bool("help", false, "Print help")
@@ -173,17 +179,25 @@ func main() {
 	getopt.Alias("R", "repo")
 	getopt.Alias("a", "add")
 	getopt.Alias("A", "add-repo-admin")
+	getopt.Alias("B", "enable-dependabot")
+	getopt.Alias("P", "dependabot-grouped-prs")
 	getopt.Alias("L", "list-repo-collaborators")
 	getopt.Alias("S", "list-actions-storage")
 	getopt.Alias("G", "recent-admin-grants")
+	getopt.Alias("M", "recent-admin-removals")
 	getopt.Alias("c", "find-common-teams")
 	getopt.Alias("r", "reset")
 	getopt.Alias("d", "describe-team")
 	getopt.Alias("u", "user-repo-access")
+	getopt.Alias("U", "admin-user-report")
 	getopt.Alias("i", "init")
 	getopt.Alias("t", "rotate-token")
 	getopt.Alias("h", "help")
 	getopt.Parse()
+
+	if *dependabotGroupedPRsFlag && !*enableDependabotFlag {
+		log.Fatal("--dependabot-grouped-prs must be used with --enable-dependabot")
+	}
 
 	if *initFlag {
 		if err := initConfig(); err != nil {
@@ -210,15 +224,21 @@ func main() {
 		fmt.Println("  -d, --describe-team          Show detailed summary of a team (use with --team)")
 		fmt.Println("\nREPOSITORY OPERATIONS:")
 		fmt.Println("  -A, --add-repo-admin         Add users as admin collaborators to a repository (requires --repo)")
+		fmt.Println("  -B, --enable-dependabot      Enable Dependabot alerts and security updates")
+		fmt.Println("  -P, --dependabot-grouped-prs Optional with --enable-dependabot: verify grouped PR config and print guidance")
 		fmt.Println("  -L, --list-repo-collaborators")
 		fmt.Println("                               List all collaborators on a repository (requires --repo)")
 		fmt.Println("  -S, --list-actions-storage   List top 10 repositories by Actions cache usage and org billable constrained storage")
 		fmt.Println("  -G, --recent-admin-grants    List users recently granted admin access to any org repo (Monday includes since Friday, still active)")
+		fmt.Println("  -M, --recent-admin-removals  List users recently removed from admin access on any org repo (same lookback window)")
 		fmt.Println("  -c, --find-common-teams      Find teams with access to ALL specified repositories")
 		fmt.Println("  -u, --user-repo-access       Report a user's effective access to a repository via team membership (requires --repo)")
+		fmt.Println("  -U, --admin-user-report      Report repositories where users have effective admin access via teams or direct collaborator links")
 		fmt.Println("\nOPTIONS:")
 		fmt.Printf("  -s, --team <name>            Specify team name (default: '%s')\n", defaultTeam)
 		fmt.Println("  -R, --repo <name>            Specify repository name for repo operations")
+		fmt.Println("      --resume-after-repo      Resume all-repos access reporting after the named repository")
+		fmt.Println("      --checkpoint-file        Persist the last completed repo for deterministic admin-user-report restarts")
 		fmt.Println("  -i, --init                   Initialize configuration file interactively")
 		fmt.Println("  -t, --rotate-token           Rotate/update GitHub token in configuration")
 		fmt.Println("  -h, --help                   Show this help message")
@@ -239,16 +259,32 @@ func main() {
 		fmt.Println("  ghOrgTool --reset username")
 		fmt.Println("\n  # Add user as admin to a repository")
 		fmt.Println("  ghOrgTool --add-repo-admin --repo my-repo user1 user2")
+		fmt.Println("\n  # Enable Dependabot on one repository")
+		fmt.Println("  ghOrgTool --enable-dependabot --repo my-repo")
+		fmt.Println("\n  # Enable Dependabot and check grouped PR config (no direct commits)")
+		fmt.Println("  ghOrgTool --enable-dependabot --dependabot-grouped-prs --repo my-repo")
+		fmt.Println("\n  # Enable Dependabot on multiple repositories")
+		fmt.Println("  ghOrgTool --enable-dependabot repo1 repo2 repo3")
 		fmt.Println("\n  # List all collaborators on a repository")
 		fmt.Println("  ghOrgTool --list-repo-collaborators --repo my-repo")
 		fmt.Println("\n  # List top repositories by Actions cache usage and show billable constrained storage")
 		fmt.Println("  ghOrgTool --list-actions-storage")
 		fmt.Println("\n  # List users recently granted admin access to any org repo")
 		fmt.Println("  ghOrgTool --recent-admin-grants")
+		fmt.Println("\n  # List users recently removed from admin access on any org repo")
+		fmt.Println("  ghOrgTool --recent-admin-removals")
 		fmt.Println("\n  # Find teams with access to multiple repositories")
 		fmt.Println("  ghOrgTool --find-common-teams repo1 repo2 repo3")
 		fmt.Println("\n  # Show detailed summary of a team")
 		fmt.Println("  ghOrgTool --describe-team --team 'Engineering Team'")
+		fmt.Println("\n  # Report repos where any user has admin access via teams")
+		fmt.Println("  ghOrgTool --admin-user-report")
+		fmt.Println("\n  # Report repos where a specific user has admin access via teams")
+		fmt.Println("  ghOrgTool --admin-user-report someuser")
+		fmt.Println("\n  # Resume an interrupted admin access scan")
+		fmt.Println("  ghOrgTool --admin-user-report --resume-after-repo some-repo")
+		fmt.Println("\n  # Run with a checkpoint file for deterministic restarts")
+		fmt.Println("  ghOrgTool --admin-user-report --checkpoint-file admin-user-report.checkpoint > admin-users.csv")
 		os.Exit(0)
 	}
 	var userOrRepoList = flag.Args()
@@ -295,6 +331,13 @@ func main() {
 		return
 	}
 
+	if *recentAdminRemovals {
+		if err := listRecentAdminRemovals(ctx, client, ORG); err != nil {
+			log.Printf("Error listing recent admin removals: %s", err)
+		}
+		return
+	}
+
 	if *addRepoAdmin {
 		// Add user as admin collaborator to repository
 		if *repoName == "" {
@@ -337,6 +380,75 @@ func main() {
 		return
 	}
 
+	if *enableDependabotFlag {
+		var repoTargets []string
+		if *repoName != "" {
+			repoTargets = append(repoTargets, *repoName)
+		}
+		repoTargets = append(repoTargets, userOrRepoList...)
+
+		if len(repoTargets) == 0 {
+			log.Fatal("At least one repository is required when using --enable-dependabot")
+		}
+
+		seen := make(map[string]struct{})
+		validTargets := 0
+
+		for _, repo := range repoTargets {
+			repo = strings.TrimSpace(repo)
+			if repo == "" {
+				continue
+			}
+			if _, exists := seen[repo]; exists {
+				continue
+			}
+			seen[repo] = struct{}{}
+
+			if !isRepository(ctx, client, ORG, repo) {
+				log.Printf("Warning: repository '%s' not found in organization '%s', skipping", repo, ORG)
+				continue
+			}
+
+			result, err := enableDependabot(ctx, client, ORG, repo)
+			if err != nil {
+				log.Printf("Error enabling Dependabot for repository %s: %s", repo, err)
+				continue
+			}
+
+			validTargets++
+			switch {
+			case result.vulnerabilityAlertsEnabled && result.automatedFixesEnabled:
+				log.Printf("Enabled Dependabot alerts and security updates for repository %s", repo)
+			case result.vulnerabilityAlertsEnabled:
+				log.Printf("Enabled Dependabot alerts for repository %s (security updates were already enabled)", repo)
+			case result.automatedFixesEnabled:
+				log.Printf("Enabled Dependabot security updates for repository %s (alerts were already enabled)", repo)
+			default:
+				log.Printf("Dependabot is already fully enabled for repository %s", repo)
+			}
+
+			if *dependabotGroupedPRsFlag {
+				groupedConfigured, groupedErr := hasDependabotGroupedPRs(ctx, client, ORG, repo)
+				if groupedErr != nil {
+					log.Printf("Unable to check grouped Dependabot PR config for repository %s: %s", repo, groupedErr)
+					continue
+				}
+				if groupedConfigured {
+					log.Printf("Grouped Dependabot PRs are already configured for repository %s", repo)
+				} else {
+					log.Printf("Grouped Dependabot PRs requested for repository %s, but %s is missing or ungrouped", repo, dependabotConfigPath)
+					log.Printf("Direct commits are disabled. Open a pull request in %s/%s with this content in %s:", ORG, repo, dependabotConfigPath)
+					fmt.Println(defaultDependabotGroupedPRTemplate())
+				}
+			}
+		}
+
+		if validTargets == 0 {
+			log.Fatal("No valid repositories found for --enable-dependabot")
+		}
+		return
+	}
+
 	if *userRepoAccess {
 		// Report a user's effective access to a repository via their team memberships
 		if *repoName == "" {
@@ -355,6 +467,24 @@ func main() {
 		}
 		if err := reportUserRepoAccess(ctx, client, tc, ORG, login, *repoName); err != nil {
 			log.Printf("Error generating access report: %s", err)
+		}
+		return
+	}
+
+	if *adminUserReport {
+		if len(userOrRepoList) == 0 {
+			if err := reportOrgAdminRepoAccess(ctx, client, ORG, *resumeAfterRepo, *checkpointFile); err != nil {
+				log.Printf("Error generating org-wide admin access report: %s", err)
+			}
+			return
+		}
+		userSlug := userOrRepoList[0]
+		login, err := resolveLogin(ctx, tc, &userSlug)
+		if err != nil || login == "" {
+			log.Fatalf("Unable to resolve user '%s'", userSlug)
+		}
+		if err := reportUserAdminRepoAccess(ctx, client, tc, ORG, login, *resumeAfterRepo); err != nil {
+			log.Printf("Error generating admin access report: %s", err)
 		}
 		return
 	}

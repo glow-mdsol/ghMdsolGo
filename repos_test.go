@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -769,6 +775,230 @@ func TestEnableVulnerabilityAlerts_GetError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// enableAutomatedSecurityFixes / enableDependabot
+// ---------------------------------------------------------------------------
+
+func TestEnableAutomatedSecurityFixes_AlreadyEnabled(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": true, "paused": false})
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableAutomatedSecurityFixes(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if enabled {
+		t.Error("expected false when automated security fixes were already enabled")
+	}
+}
+
+func TestEnableAutomatedSecurityFixes_EnablesNew(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	putCalled := false
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": false, "paused": false})
+			return
+		}
+		if r.Method == http.MethodPut {
+			putCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	enabled, err := enableAutomatedSecurityFixes(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !enabled {
+		t.Error("expected true when automated security fixes were newly enabled")
+	}
+	if !putCalled {
+		t.Error("expected PUT request to enable automated security fixes")
+	}
+}
+
+func TestEnableDependabot_EnablesBoth(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	vulnPutCalled := false
+	automationPutCalled := false
+
+	mux.HandleFunc("/repos/example-org/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodPut {
+			vulnPutCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]bool{"enabled": false, "paused": false})
+			return
+		}
+		if r.Method == http.MethodPut {
+			automationPutCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, `{"message":"unexpected method"}`, http.StatusMethodNotAllowed)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	result, err := enableDependabot(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.vulnerabilityAlertsEnabled {
+		t.Error("expected vulnerability alerts to be newly enabled")
+	}
+	if !result.automatedFixesEnabled {
+		t.Error("expected automated security fixes to be newly enabled")
+	}
+	if !vulnPutCalled {
+		t.Error("expected vulnerability alerts PUT request")
+	}
+	if !automationPutCalled {
+		t.Error("expected automated security fixes PUT request")
+	}
+}
+
+func TestEnableDependabot_AutomatedFixesCheckError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/example-org/my-repo/vulnerability-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/repos/example-org/my-repo/automated-security-fixes", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Internal Server Error"}`, http.StatusInternalServerError)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := enableDependabot(ctx, client, "example-org", "my-repo")
+	if err == nil {
+		t.Error("expected error when automated security fixes check fails")
+	}
+}
+
+func TestHasDependabotGroupedPRs_FileMissing(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if configured {
+		t.Error("expected grouped PR config to be false when file is missing")
+	}
+}
+
+func TestHasDependabotGroupedPRs_TrueWhenConfigContainsGroups(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	existing := "version: 2\nupdates:\n  - package-ecosystem: gomod\n    directory: /\n    schedule:\n      interval: weekly\n    groups:\n      all-dependencies:\n        patterns:\n          - \"*\"\n"
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"type":     "file",
+			"sha":      "abc123",
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString([]byte(existing)),
+		})
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !configured {
+		t.Error("expected grouped PR config to be detected")
+	}
+}
+
+func TestHasDependabotGroupedPRs_FalseWithoutGroups(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	existing := "version: 2\nupdates:\n  - package-ecosystem: gomod\n    directory: /\n    schedule:\n      interval: weekly\n"
+	mux.HandleFunc("/repos/example-org/my-repo/contents/.github/dependabot.yml", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"type":     "file",
+			"sha":      "abc123",
+			"encoding": "base64",
+			"content":  base64.StdEncoding.EncodeToString([]byte(existing)),
+		})
+	})
+
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	configured, err := hasDependabotGroupedPRs(ctx, client, "example-org", "my-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if configured {
+		t.Error("expected grouped PR config to be false when groups are not present")
+	}
+}
+
+func TestDefaultDependabotGroupedPRTemplate(t *testing.T) {
+	template := defaultDependabotGroupedPRTemplate()
+	if !strings.Contains(template, "version: 2") {
+		t.Fatal("template should include version")
+	}
+	if !strings.Contains(template, "package-ecosystem: gomod") {
+		t.Fatal("template should include gomod ecosystem")
+	}
+	if !strings.Contains(template, "package-ecosystem: github-actions") {
+		t.Fatal("template should include github-actions ecosystem")
+	}
+	if !strings.Contains(template, "groups:") || !strings.Contains(template, "patterns:") {
+		t.Fatal("template should include grouped PR rules")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // listRepositoryCollaborators
 // ---------------------------------------------------------------------------
 
@@ -1483,6 +1713,20 @@ func auditLogEntry(login, repo, permission string, createdAtMs int64) map[string
 	}
 }
 
+func auditLogEntryWithAction(action, login, repo, permission string, createdAtMs int64) map[string]interface{} {
+	entry := map[string]interface{}{
+		"action":     action,
+		"actor":      "an-admin",
+		"user":       login,
+		"repo":       repo,
+		"created_at": createdAtMs,
+	}
+	if permission != "" {
+		entry["permission"] = permission
+	}
+	return entry
+}
+
 func TestFindRecentAdminGrants_AdminGranted(t *testing.T) {
 	ctx := context.Background()
 	mux := http.NewServeMux()
@@ -1658,5 +1902,593 @@ func TestFindRecentAdminGrants_APIError(t *testing.T) {
 	_, err := findRecentAdminGrants(ctx, client, "example-org")
 	if err == nil {
 		t.Error("expected error when audit log API returns 403, got nil")
+	}
+}
+
+func TestFindRecentAdminRemovals_AdminRemovedWithNoCurrentAccess(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	recentMs := time.Now().Add(-2 * time.Hour).UnixMilli()
+	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			auditLogEntryWithAction("repo.remove_member", "alice", "example-org/my-repo", "admin", recentMs),
+		})
+	})
+	mux.HandleFunc("/repos/example-org/my-repo/collaborators/alice/permission", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	results, err := findRecentAdminRemovals(ctx, client, "example-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].login != "alice" {
+		t.Errorf("login = %q, want alice", results[0].login)
+	}
+	if results[0].repo != "my-repo" {
+		t.Errorf("repo = %q, want my-repo", results[0].repo)
+	}
+	if results[0].currentPerm != "none" {
+		t.Errorf("currentPerm = %q, want none", results[0].currentPerm)
+	}
+}
+
+func TestFindRecentAdminRemovals_NonAdminRemovalSkipped(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	recentMs := time.Now().Add(-1 * time.Hour).UnixMilli()
+	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			auditLogEntryWithAction("repo.remove_member", "bob", "example-org/my-repo", "write", recentMs),
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	results, err := findRecentAdminRemovals(ctx, client, "example-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for non-admin removal, got %d", len(results))
+	}
+}
+
+func TestFindRecentAdminRemovals_StillAdminSkipped(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	recentMs := time.Now().Add(-1 * time.Hour).UnixMilli()
+	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			auditLogEntryWithAction("repo.remove_member", "carol", "example-org/my-repo", "admin", recentMs),
+		})
+	})
+	mux.HandleFunc("/repos/example-org/my-repo/collaborators/carol/permission", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"permission": "admin", "user": map[string]string{"login": "carol"}})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	results, err := findRecentAdminRemovals(ctx, client, "example-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when user still has admin, got %d", len(results))
+	}
+}
+
+func TestFindRecentAdminRemovals_EntryTooOld(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	oldMs := time.Now().Add(-96 * time.Hour).UnixMilli()
+	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			auditLogEntryWithAction("repo.remove_member", "dave", "example-org/my-repo", "admin", oldMs),
+		})
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	results, err := findRecentAdminRemovals(ctx, client, "example-org")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for old entry, got %d", len(results))
+	}
+}
+
+func TestFindRecentAdminRemovals_APIError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/example-org/audit-log", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
+	})
+	client, teardown := newTestClient(mux)
+	defer teardown()
+
+	_, err := findRecentAdminRemovals(ctx, client, "example-org")
+	if err == nil {
+		t.Error("expected error when audit log API returns 403, got nil")
+	}
+}
+
+func TestReportRecentAdminRemovals_NoResults(t *testing.T) {
+	got := reportRecentAdminRemovals("example-org", nil)
+	if !strings.Contains(got, "No recent admin access removals detected") {
+		t.Errorf("expected no-results message, got %q", got)
+	}
+}
+
+func TestReportRecentAdminRemovals_WithResults(t *testing.T) {
+	removedAt := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+	results := []adminRemovalResult{
+		{
+			repo:        "sample-orchestrator",
+			login:       "alice",
+			actor:       "org-admin",
+			removedAt:   removedAt,
+			accessURL:   "https://github.com/example-org/sample-orchestrator/settings/access",
+			currentPerm: "none",
+		},
+	}
+	got := reportRecentAdminRemovals("example-org", results)
+	if !strings.Contains(got, "alice") {
+		t.Errorf("expected login 'alice' in output, got %q", got)
+	}
+	if !strings.Contains(got, "sample-orchestrator") {
+		t.Errorf("expected repo name in output, got %q", got)
+	}
+	if !strings.Contains(got, "Removed by: org-admin") {
+		t.Errorf("expected actor in output, got %q", got)
+	}
+	if !strings.Contains(got, "2026-04-15 10:00:00 UTC") {
+		t.Errorf("expected formatted removal time in output, got %q", got)
+	}
+	if !strings.Contains(got, "Current access: none") {
+		t.Errorf("expected current permission in output, got %q", got)
+	}
+}
+
+type rewriteHostTransport struct {
+	target *url.URL
+	base   http.RoundTripper
+}
+
+func (t *rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	urlCopy := *clone.URL
+	urlCopy.Scheme = t.target.Scheme
+	urlCopy.Host = t.target.Host
+	clone.URL = &urlCopy
+	clone.Host = t.target.Host
+	return t.base.RoundTrip(clone)
+}
+
+func newRepoAccessTestClients(mux *http.ServeMux) (*github.Client, *http.Client, func()) {
+	server := httptest.NewServer(mux)
+	baseURL, _ := url.Parse(server.URL + "/")
+
+	ghClient := github.NewClient(nil)
+	ghClient.BaseURL = baseURL
+	ghClient.UploadURL = baseURL
+
+	httpClient := server.Client()
+	httpClient.Transport = &rewriteHostTransport{target: baseURL, base: httpClient.Transport}
+
+	return ghClient, httpClient, server.Close
+}
+
+func TestFindUserAdminRepoAccess_AdminOnlyAcrossRepos(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"data": map[string]interface{}{
+				"organization": map[string]interface{}{
+					"id":    "ORG_1",
+					"login": "example-org",
+					"teams": map[string]interface{}{
+						"totalCount": 2,
+						"nodes": []map[string]interface{}{
+							{"id": "TEAM_1", "name": "Platform Admins", "description": "Admin team", "slug": "team-admin", "url": "https://github.com/orgs/example-org/teams/team-admin"},
+							{"id": "TEAM_2", "name": "Writers", "description": "Write team", "slug": "team-write", "url": "https://github.com/orgs/example-org/teams/team-write"},
+						},
+					},
+				},
+			},
+		})
+	})
+
+	mux.HandleFunc("/orgs/example-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "repo-a"},
+			{"name": "repo-b"},
+			{"name": "repo-c"},
+		})
+	})
+
+	repoTeams := map[string][]map[string]interface{}{
+		"repo-a": {
+			{"name": "Platform Admins", "slug": "team-admin", "html_url": "https://github.com/orgs/example-org/teams/team-admin", "permission": "admin"},
+			{"name": "Writers", "slug": "team-write", "html_url": "https://github.com/orgs/example-org/teams/team-write", "permission": "push"},
+		},
+		"repo-b": {
+			{"name": "Writers", "slug": "team-write", "html_url": "https://github.com/orgs/example-org/teams/team-write", "permission": "push"},
+		},
+		"repo-c": {
+			{"name": "Other Admins", "slug": "team-other", "html_url": "https://github.com/orgs/example-org/teams/team-other", "permission": "admin"},
+		},
+	}
+	for repoName, teams := range repoTeams {
+		repoName := repoName
+		teams := teams
+		mux.HandleFunc("/repos/example-org/"+repoName, func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, map[string]interface{}{"name": repoName, "owner": map[string]string{"login": "example-org"}})
+		})
+		mux.HandleFunc("/repos/example-org/"+repoName+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, teams)
+		})
+	}
+
+	client, httpClient, teardown := newRepoAccessTestClients(mux)
+	defer teardown()
+
+	report, err := findUserAdminRepoAccess(ctx, client, httpClient, "example-org", "alice", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.processedRepos != 3 {
+		t.Fatalf("processedRepos = %d, want 3", report.processedRepos)
+	}
+	if report.skippedRepos != 0 {
+		t.Fatalf("skippedRepos = %d, want 0", report.skippedRepos)
+	}
+	if report.resumeAfterRepo != "repo-c" {
+		t.Fatalf("resumeAfterRepo = %q, want repo-c", report.resumeAfterRepo)
+	}
+	if len(report.results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(report.results))
+	}
+	if report.results[0].repoName != "repo-a" {
+		t.Fatalf("repoName = %q, want repo-a", report.results[0].repoName)
+	}
+	if report.results[0].effectivePerm != "admin" {
+		t.Fatalf("effectivePerm = %q, want admin", report.results[0].effectivePerm)
+	}
+	if len(report.results[0].matchingTeams) != 2 {
+		t.Fatalf("matchingTeams = %d, want 2", len(report.results[0].matchingTeams))
+	}
+
+	out := formatUserAdminRepoAccessReport(report)
+	if !strings.Contains(out, "repo,user,access_type,team_name,access_url") {
+		t.Fatalf("expected CSV header, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-a,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected repo-a admin team CSV row, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-a,alice,team,Writers,https://github.com/orgs/example-org/teams/team-write") {
+		t.Fatalf("expected repo-a writer team CSV row, got %q", out)
+	}
+	if strings.Contains(out, "example-org/repo-b,") {
+		t.Fatalf("did not expect repo-b in output, got %q", out)
+	}
+	if strings.Contains(out, "Processed 3 repositories") {
+		t.Fatalf("did not expect non-CSV summary, got %q", out)
+	}
+}
+
+func TestFindUserAdminRepoAccess_ResumeAfterRepoAndSkipErrors(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{
+			"data": map[string]interface{}{
+				"organization": map[string]interface{}{
+					"id":    "ORG_1",
+					"login": "example-org",
+					"teams": map[string]interface{}{
+						"totalCount": 1,
+						"nodes": []map[string]interface{}{
+							{"id": "TEAM_1", "name": "Platform Admins", "description": "Admin team", "slug": "team-admin", "url": "https://github.com/orgs/example-org/teams/team-admin"},
+						},
+					},
+				},
+			},
+		})
+	})
+
+	mux.HandleFunc("/orgs/example-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "repo-a"},
+			{"name": "repo-b"},
+			{"name": "repo-c"},
+		})
+	})
+
+	mux.HandleFunc("/repos/example-org/repo-b", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/example-org/repo-c", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "repo-c", "owner": map[string]string{"login": "example-org"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-c/teams", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "Platform Admins", "slug": "team-admin", "html_url": "https://github.com/orgs/example-org/teams/team-admin", "permission": "admin"},
+		})
+	})
+
+	client, httpClient, teardown := newRepoAccessTestClients(mux)
+	defer teardown()
+
+	report, err := findUserAdminRepoAccess(ctx, client, httpClient, "example-org", "alice", "repo-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.processedRepos != 2 {
+		t.Fatalf("processedRepos = %d, want 2", report.processedRepos)
+	}
+	if report.skippedRepos != 1 {
+		t.Fatalf("skippedRepos = %d, want 1", report.skippedRepos)
+	}
+	if report.resumeAfterRepo != "repo-c" {
+		t.Fatalf("resumeAfterRepo = %q, want repo-c", report.resumeAfterRepo)
+	}
+	if len(report.results) != 1 || report.results[0].repoName != "repo-c" {
+		t.Fatalf("results = %#v, want only repo-c", report.results)
+	}
+
+	out := formatUserAdminRepoAccessReport(report)
+	if !strings.Contains(out, "repo,user,access_type,team_name,access_url") {
+		t.Fatalf("expected CSV header, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-c,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected repo-c CSV row, got %q", out)
+	}
+	if strings.Contains(out, "repo-a") {
+		t.Fatalf("did not expect resumed repo-a in output, got %q", out)
+	}
+}
+
+func TestFindOrgAdminRepoAccess_AllUsers(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/orgs/example-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "repo-a"},
+			{"name": "repo-b"},
+		})
+	})
+
+	mux.HandleFunc("/repos/example-org/repo-a", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "repo-a", "owner": map[string]string{"login": "example-org"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-b", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "repo-b", "owner": map[string]string{"login": "example-org"}})
+	})
+
+	mux.HandleFunc("/repos/example-org/repo-a/teams", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "Platform Admins", "slug": "team-admin", "html_url": "https://github.com/orgs/example-org/teams/team-admin", "permission": "admin"},
+			{"name": "Readers", "slug": "team-read", "html_url": "https://github.com/orgs/example-org/teams/team-read", "permission": "pull"},
+		})
+	})
+	mux.HandleFunc("/repos/example-org/repo-b/teams", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{
+			{"name": "Ops Admins", "slug": "team-ops", "html_url": "https://github.com/orgs/example-org/teams/team-ops", "permission": "admin"},
+		})
+	})
+
+	mux.HandleFunc("/orgs/example-org/teams/team-admin/members", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "alice"}, {"login": "bob"}})
+	})
+	mux.HandleFunc("/orgs/example-org/teams/team-ops/members", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "carol"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-a/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "dave", "permissions": map[string]bool{"admin": true}}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-b/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "erin", "permissions": map[string]bool{"push": true}}})
+	})
+
+	client, _, teardown := newRepoAccessTestClients(mux)
+	defer teardown()
+
+	report, err := findOrgAdminRepoAccess(ctx, client, "example-org", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.processedRepos != 2 {
+		t.Fatalf("processedRepos = %d, want 2", report.processedRepos)
+	}
+	if report.skippedRepos != 0 {
+		t.Fatalf("skippedRepos = %d, want 0", report.skippedRepos)
+	}
+	if len(report.results) != 4 {
+		t.Fatalf("len(results) = %d, want 4", len(report.results))
+	}
+
+	out := formatOrgAdminRepoAccessReport(report)
+	if !strings.Contains(out, "repo,user,access_type,team_name,access_url") {
+		t.Fatalf("expected CSV header, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-a,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected alice repo-a CSV row, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-b,carol,team,Ops Admins,https://github.com/orgs/example-org/teams/team-ops") {
+		t.Fatalf("expected carol repo-b CSV row, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-a,dave,collaborator,,https://github.com/example-org/repo-a/settings/access") {
+		t.Fatalf("expected dave collaborator CSV row, got %q", out)
+	}
+	if strings.Contains(out, "example-org/repo-b,erin,collaborator") {
+		t.Fatalf("did not expect non-admin collaborator row, got %q", out)
+	}
+}
+
+func TestFindOrgAdminRepoAccess_ResumeAndSkipError(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/orgs/example-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"name": "repo-a"}, {"name": "repo-b"}, {"name": "repo-c"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-b", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/example-org/repo-c", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]interface{}{"name": "repo-c", "owner": map[string]string{"login": "example-org"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-c/teams", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"name": "Platform Admins", "slug": "team-admin", "html_url": "https://github.com/orgs/example-org/teams/team-admin", "permission": "admin"}})
+	})
+	mux.HandleFunc("/orgs/example-org/teams/team-admin/members", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "alice"}})
+	})
+	mux.HandleFunc("/repos/example-org/repo-c/collaborators", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "zoe", "permissions": map[string]bool{"admin": true}}})
+	})
+
+	client, _, teardown := newRepoAccessTestClients(mux)
+	defer teardown()
+
+	report, err := findOrgAdminRepoAccess(ctx, client, "example-org", "repo-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.processedRepos != 2 {
+		t.Fatalf("processedRepos = %d, want 2", report.processedRepos)
+	}
+	if report.skippedRepos != 1 {
+		t.Fatalf("skippedRepos = %d, want 1", report.skippedRepos)
+	}
+	if report.resumeAfterRepo != "repo-c" {
+		t.Fatalf("resumeAfterRepo = %q, want repo-c", report.resumeAfterRepo)
+	}
+	if len(report.results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(report.results))
+	}
+
+	out := formatOrgAdminRepoAccessReport(report)
+	if !strings.Contains(out, "repo,user,access_type,team_name,access_url") {
+		t.Fatalf("expected CSV header, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-c,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected repo-c CSV row, got %q", out)
+	}
+	if !strings.Contains(out, "example-org/repo-c,zoe,collaborator,,https://github.com/example-org/repo-c/settings/access") {
+		t.Fatalf("expected collaborator CSV row, got %q", out)
+	}
+	if strings.Contains(out, "Processed 2 repositories") {
+		t.Fatalf("did not expect non-CSV summary, got %q", out)
+	}
+}
+
+func TestResolveResumeAfterRepoFromCheckpointFile(t *testing.T) {
+	dir := t.TempDir()
+	checkpointFile := filepath.Join(dir, "admin-report.checkpoint")
+	if err := os.WriteFile(checkpointFile, []byte("repo-b\n"), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+
+	resumeAfterRepo, err := resolveResumeAfterRepo("", checkpointFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resumeAfterRepo != "repo-b" {
+		t.Fatalf("resumeAfterRepo = %q, want repo-b", resumeAfterRepo)
+	}
+}
+
+func TestStreamOrgAdminRepoAccessReport_RepoOrderedCheckpointedResume(t *testing.T) {
+	ctx := context.Background()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/orgs/example-org/repos", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"name": "repo-a"}, {"name": "repo-b"}, {"name": "repo-c"}})
+	})
+	for _, repoName := range []string{"repo-a", "repo-b", "repo-c"} {
+		repoName := repoName
+		mux.HandleFunc("/repos/example-org/"+repoName+"/teams", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, []map[string]interface{}{{"name": "Platform Admins", "slug": "team-admin", "html_url": "https://github.com/orgs/example-org/teams/team-admin", "permission": "admin"}})
+		})
+		mux.HandleFunc("/repos/example-org/"+repoName+"/collaborators", func(w http.ResponseWriter, r *http.Request) {
+			if repoName == "repo-b" {
+				writeJSON(w, []map[string]interface{}{{"login": "zoe", "permissions": map[string]bool{"admin": true}}})
+				return
+			}
+			writeJSON(w, []map[string]interface{}{})
+		})
+	}
+	mux.HandleFunc("/orgs/example-org/teams/team-admin/members", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, []map[string]interface{}{{"login": "alice"}})
+	})
+
+	client, _, teardown := newRepoAccessTestClients(mux)
+	defer teardown()
+
+	checkpointFile := filepath.Join(t.TempDir(), "admin-report.checkpoint")
+	var firstRun bytes.Buffer
+	if err := streamOrgAdminRepoAccessReport(ctx, client, &firstRun, "example-org", "", checkpointFile); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	firstOut := firstRun.String()
+	if !strings.HasPrefix(firstOut, "repo,user,access_type,team_name,access_url\n") {
+		t.Fatalf("expected CSV header at start, got %q", firstOut)
+	}
+	repoAPosition := strings.Index(firstOut, "example-org/repo-a,alice,team")
+	repoBPosition := strings.Index(firstOut, "example-org/repo-b,alice,team")
+	repoBCollabPosition := strings.Index(firstOut, "example-org/repo-b,zoe,collaborator")
+	repoCPosition := strings.Index(firstOut, "example-org/repo-c,alice,team")
+	if !(repoAPosition < repoBPosition && repoBPosition < repoBCollabPosition && repoBCollabPosition < repoCPosition) {
+		t.Fatalf("expected repo-ordered output, got %q", firstOut)
+	}
+
+	checkpointData, err := os.ReadFile(checkpointFile)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if strings.TrimSpace(string(checkpointData)) != "repo-c" {
+		t.Fatalf("checkpoint = %q, want repo-c", string(checkpointData))
+	}
+
+	if err := os.WriteFile(checkpointFile, []byte("repo-a\n"), 0o600); err != nil {
+		t.Fatalf("overwrite checkpoint: %v", err)
+	}
+	var resumed bytes.Buffer
+	if err := streamOrgAdminRepoAccessReport(ctx, client, &resumed, "example-org", "", checkpointFile); err != nil {
+		t.Fatalf("unexpected resume error: %v", err)
+	}
+
+	resumedOut := resumed.String()
+	if strings.Contains(resumedOut, "repo,user,access_type,team_name,access_url") {
+		t.Fatalf("did not expect header on resumed output, got %q", resumedOut)
+	}
+	if strings.Contains(resumedOut, "example-org/repo-a,") {
+		t.Fatalf("did not expect repo-a rows on resume, got %q", resumedOut)
+	}
+	if !strings.Contains(resumedOut, "example-org/repo-b,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected repo-b team row on resume, got %q", resumedOut)
+	}
+	if !strings.Contains(resumedOut, "example-org/repo-b,zoe,collaborator,,https://github.com/example-org/repo-b/settings/access") {
+		t.Fatalf("expected repo-b collaborator row on resume, got %q", resumedOut)
+	}
+	if !strings.Contains(resumedOut, "example-org/repo-c,alice,team,Platform Admins,https://github.com/orgs/example-org/teams/team-admin") {
+		t.Fatalf("expected repo-c row on resume, got %q", resumedOut)
 	}
 }
